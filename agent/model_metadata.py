@@ -119,6 +119,10 @@ DEFAULT_CONTEXT_LENGTHS = {
     "glm": 202752,
     # Kimi
     "kimi": 262144,
+    # xAI (official support added 2026-04-08)
+    "grok-4.20": 2000000,
+    "grok-4": 1000000,
+    "grok": 1000000,
     # Arcee
     "trinity": 262144,
     # Hugging Face Inference Providers — model IDs use org/name format
@@ -187,6 +191,7 @@ _URL_TO_PROVIDER: Dict[str, str] = {
     "api.githubcopilot.com": "copilot",
     "models.github.ai": "copilot",
     "api.fireworks.ai": "fireworks",
+    "api.x.ai": "xai",
 }
 
 

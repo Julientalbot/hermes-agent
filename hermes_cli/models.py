@@ -48,6 +48,8 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("z-ai/glm-5-turbo",                ""),
     ("moonshotai/kimi-k2.5",            ""),
     ("x-ai/grok-4.20-beta",             ""),
+    ("xai/grok-4.20-0309-reasoning",    "official xAI 2M context"),
+    ("xai/grok-4-1-fast-reasoning",     "official xAI 1M context"),
     ("nvidia/nemotron-3-super-120b-a12b",      ""),
     ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
     ("arcee-ai/trinity-large-preview:free", "free"),
