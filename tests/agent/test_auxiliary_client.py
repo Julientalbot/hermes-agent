@@ -831,7 +831,8 @@ class TestAuxiliaryPoolAwareness:
 
     def test_vision_uses_xai_when_no_openrouter_no_nous(self, monkeypatch):
         """When neither OpenRouter nor Nous is available, the vision auto chain
-        must fall back to xAI (grok-4-1-fast-non-reasoning) if XAI_API_KEY is set."""
+        must fall back to xAI. The default vision model is grok-4.20
+        (non-reasoning) — more capable than the cheap text default."""
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
         with patch("agent.auxiliary_client._read_nous_auth", return_value=None), \
@@ -839,11 +840,12 @@ class TestAuxiliaryPoolAwareness:
             mock_openai.return_value = MagicMock()
             client, model = get_vision_auxiliary_client()
         assert client is not None
-        assert model == "grok-4-1-fast-non-reasoning"
+        assert model == "grok-4.20-0309-non-reasoning"
 
     def test_vision_forced_xai_uses_xai_backend(self, monkeypatch):
         """Explicit provider='xai' in config should resolve to the xAI backend
-        even when OpenRouter is also available (no silent fallback)."""
+        even when OpenRouter is also available (no silent fallback).
+        Default vision model is grok-4.20-0309-non-reasoning."""
         monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
         config = {"auxiliary": {"vision": {"provider": "xai"}}}
@@ -852,7 +854,7 @@ class TestAuxiliaryPoolAwareness:
             mock_openai.return_value = MagicMock()
             resolved_provider, client, model = resolve_vision_provider_client()
         assert client is not None
-        assert model == "grok-4-1-fast-non-reasoning"
+        assert model == "grok-4.20-0309-non-reasoning"
         assert resolved_provider == "xai"
         # Verify the xAI base URL was used, not OpenRouter
         call_base = mock_openai.call_args.kwargs.get("base_url", "")

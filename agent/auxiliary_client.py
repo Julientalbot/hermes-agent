@@ -108,9 +108,10 @@ _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
     "opencode-zen": "gemini-3-flash",
     "opencode-go": "glm-5",
     "kilocode": "google/gemini-3-flash-preview",
-    # grok-4-1-fast-non-reasoning: vision-capable, fast (~3-5s), cheap
-    # ($0.20/$0.50 per M tokens), and skips reasoning — ideal for side
-    # tasks like compression, session_search, and vision analysis.
+    # grok-4-1-fast-non-reasoning: fast, cheap (~$0.20/$0.50 per M),
+    # no reasoning overhead — ideal for text auxiliary tasks.  Vision
+    # tasks route through _try_xai(vision=True) and pick up grok-4.20
+    # instead for nuanced image judgments.
     "xai": "grok-4-1-fast-non-reasoning",
 }
 
@@ -137,9 +138,16 @@ _NOUS_FREE_TIER_AUX_MODEL = "xiaomi/mimo-v2-pro"
 _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 _XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1"
-# grok-4-1-fast-non-reasoning is vision-capable (text+image input), fast,
-# and cheap — the right default for side tasks that include vision analysis.
-_XAI_AUX_MODEL = "grok-4-1-fast-non-reasoning"
+# Text auxiliary tasks (compression, session_search, skills_hub, etc.):
+# grok-4-1-fast-non-reasoning is fast, cheap (~$0.20/$0.50 per M),
+# and perfectly adequate for short text processing side tasks.
+_XAI_TEXT_AUX_MODEL = "grok-4-1-fast-non-reasoning"
+# Vision auxiliary task: use the more capable grok-4.20 for nuanced image
+# judgments (e.g. "is this photo suitable for a professional LinkedIn
+# post?"), but stay on the non-reasoning variant to keep per-call latency
+# and cost sensible. Reasoning adds 15-30s and significant output tokens
+# for marginal vision gains — bounded tasks don't need chain-of-thought.
+_XAI_VISION_MODEL = "grok-4.20-0309-non-reasoning"
 _AUTH_JSON_PATH = get_hermes_home() / "auth.json"
 
 # Codex fallback: uses the Responses API (the only endpoint the Codex
@@ -780,28 +788,31 @@ def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
                    default_headers=_OR_HEADERS), _OPENROUTER_MODEL
 
 
-def _try_xai() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _try_xai(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
     """Try to build an auxiliary client for xAI (Grok) direct.
 
     Uses the credential pool first, then falls back to the XAI_API_KEY
-    environment variable.  Returns a default vision-capable model so the
-    client works for both text auxiliary tasks (compression, session
-    search, etc.) and vision analysis without reconfiguration.
+    environment variable.  Selects a different default model depending on
+    whether the caller is doing text-only side tasks (compression, session
+    search) or vision analysis — the latter gets the more capable grok-4.20
+    since nuanced image judgments benefit from the larger model.
     """
+    default_model = _XAI_VISION_MODEL if vision else _XAI_TEXT_AUX_MODEL
+
     pool_present, entry = _select_pool_entry("xai")
     if pool_present:
         api_key = _pool_runtime_api_key(entry)
         if not api_key:
             return None, None
         base_url = _pool_runtime_base_url(entry, _XAI_DEFAULT_BASE_URL) or _XAI_DEFAULT_BASE_URL
-        logger.debug("Auxiliary client: xAI via pool")
-        return OpenAI(api_key=api_key, base_url=base_url), _XAI_AUX_MODEL
+        logger.debug("Auxiliary client: xAI via pool (%s)", default_model)
+        return OpenAI(api_key=api_key, base_url=base_url), default_model
 
     api_key = os.getenv("XAI_API_KEY")
     if not api_key:
         return None, None
-    logger.debug("Auxiliary client: xAI")
-    return OpenAI(api_key=api_key, base_url=_XAI_DEFAULT_BASE_URL), _XAI_AUX_MODEL
+    logger.debug("Auxiliary client: xAI (%s)", default_model)
+    return OpenAI(api_key=api_key, base_url=_XAI_DEFAULT_BASE_URL), default_model
 
 
 def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
@@ -1485,7 +1496,7 @@ def _resolve_strict_vision_backend(provider: str) -> Tuple[Optional[Any], Option
     if provider == "nous":
         return _try_nous(vision=True)
     if provider == "xai":
-        return _try_xai()
+        return _try_xai(vision=True)
     if provider == "openai-codex":
         return _try_codex()
     if provider == "anthropic":
