@@ -24,6 +24,7 @@ from agent.prompt_builder import (
     TOOL_USE_ENFORCEMENT_GUIDANCE,
     TOOL_USE_ENFORCEMENT_MODELS,
     OPENAI_MODEL_EXECUTION_GUIDANCE,
+    GROK_EXECUTION_GUIDANCE,
     MEMORY_GUIDANCE,
     SESSION_SEARCH_GUIDANCE,
     PLATFORM_HINTS,
@@ -1058,6 +1059,48 @@ class TestOpenAIModelExecutionGuidance:
     def test_guidance_is_string(self):
         assert isinstance(OPENAI_MODEL_EXECUTION_GUIDANCE, str)
         assert len(OPENAI_MODEL_EXECUTION_GUIDANCE) > 100
+
+
+class TestGrokExecutionGuidance:
+    """Tests for Grok-specific execution discipline guidance (anti-narration)."""
+
+    def test_guidance_forbids_intent_phrases(self):
+        text = GROK_EXECUTION_GUIDANCE.lower()
+        assert "no_intent_phrases" in text
+        assert "i will" in text or "'i will" in text
+        assert "je vais" in text
+
+    def test_guidance_mandates_execute_first(self):
+        text = GROK_EXECUTION_GUIDANCE.lower()
+        assert "execute_first" in text
+        assert "tool call" in text
+        assert "first response" in text
+
+    def test_guidance_blocks_analysis_hallucination(self):
+        text = GROK_EXECUTION_GUIDANCE.lower()
+        assert "no_analysis_hallucination" in text
+        assert "hallucination" in text or "grounding" in text
+        assert "possible causes" in text
+
+    def test_guidance_uses_xml_tags(self):
+        assert "<no_intent_phrases>" in GROK_EXECUTION_GUIDANCE
+        assert "</no_intent_phrases>" in GROK_EXECUTION_GUIDANCE
+        assert "<execute_first>" in GROK_EXECUTION_GUIDANCE
+        assert "</execute_first>" in GROK_EXECUTION_GUIDANCE
+        assert "<no_analysis_hallucination>" in GROK_EXECUTION_GUIDANCE
+        assert "</no_analysis_hallucination>" in GROK_EXECUTION_GUIDANCE
+
+    def test_guidance_mentions_french_phrases(self):
+        # Grok is multilingual and the narration failure happens in any
+        # language — French phrases are explicitly listed because the main
+        # production user of this guidance runs a French-language agent.
+        text = GROK_EXECUTION_GUIDANCE.lower()
+        assert "je vais" in text
+        assert "je lance" in text or "je fais" in text
+
+    def test_guidance_is_string(self):
+        assert isinstance(GROK_EXECUTION_GUIDANCE, str)
+        assert len(GROK_EXECUTION_GUIDANCE) > 500
 
 
 # =========================================================================
