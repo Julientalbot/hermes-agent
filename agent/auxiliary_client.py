@@ -67,6 +67,8 @@ _PROVIDER_ALIASES = {
     "z-ai": "zai",
     "z.ai": "zai",
     "zhipu": "zai",
+    "x-ai": "xai",
+    "x.ai": "xai",
     "kimi": "kimi-coding",
     "moonshot": "kimi-coding",
     "minimax-china": "minimax-cn",
@@ -106,6 +108,10 @@ _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
     "opencode-zen": "gemini-3-flash",
     "opencode-go": "glm-5",
     "kilocode": "google/gemini-3-flash-preview",
+    # grok-4-1-fast-non-reasoning: vision-capable, fast (~3-5s), cheap
+    # ($0.20/$0.50 per M tokens), and skips reasoning — ideal for side
+    # tasks like compression, session_search, and vision analysis.
+    "xai": "grok-4-1-fast-non-reasoning",
 }
 
 # OpenRouter app attribution headers
@@ -130,6 +136,10 @@ _NOUS_FREE_TIER_VISION_MODEL = "xiaomi/mimo-v2-omni"
 _NOUS_FREE_TIER_AUX_MODEL = "xiaomi/mimo-v2-pro"
 _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+_XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1"
+# grok-4-1-fast-non-reasoning is vision-capable (text+image input), fast,
+# and cheap — the right default for side tasks that include vision analysis.
+_XAI_AUX_MODEL = "grok-4-1-fast-non-reasoning"
 _AUTH_JSON_PATH = get_hermes_home() / "auth.json"
 
 # Codex fallback: uses the Responses API (the only endpoint the Codex
@@ -770,6 +780,30 @@ def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
                    default_headers=_OR_HEADERS), _OPENROUTER_MODEL
 
 
+def _try_xai() -> Tuple[Optional[OpenAI], Optional[str]]:
+    """Try to build an auxiliary client for xAI (Grok) direct.
+
+    Uses the credential pool first, then falls back to the XAI_API_KEY
+    environment variable.  Returns a default vision-capable model so the
+    client works for both text auxiliary tasks (compression, session
+    search, etc.) and vision analysis without reconfiguration.
+    """
+    pool_present, entry = _select_pool_entry("xai")
+    if pool_present:
+        api_key = _pool_runtime_api_key(entry)
+        if not api_key:
+            return None, None
+        base_url = _pool_runtime_base_url(entry, _XAI_DEFAULT_BASE_URL) or _XAI_DEFAULT_BASE_URL
+        logger.debug("Auxiliary client: xAI via pool")
+        return OpenAI(api_key=api_key, base_url=base_url), _XAI_AUX_MODEL
+
+    api_key = os.getenv("XAI_API_KEY")
+    if not api_key:
+        return None, None
+    logger.debug("Auxiliary client: xAI")
+    return OpenAI(api_key=api_key, base_url=_XAI_DEFAULT_BASE_URL), _XAI_AUX_MODEL
+
+
 def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
     nous = _read_nous_auth()
     if not nous:
@@ -1238,6 +1272,17 @@ def resolve_provider_client(
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
+    # ── xAI (Grok direct) ────────────────────────────────────────────
+    if provider == "xai":
+        client, default = _try_xai()
+        if client is None:
+            logger.warning("resolve_provider_client: xai requested "
+                           "but XAI_API_KEY not set")
+            return None, None
+        final_model = model or default
+        return (_to_async_client(client, final_model) if async_mode
+                else (client, final_model))
+
     # ── OpenAI Codex (OAuth → Responses API) ─────────────────────────
     if provider == "openai-codex":
         if raw_codex:
@@ -1425,6 +1470,7 @@ def get_async_text_auxiliary_client(task: str = ""):
 _VISION_AUTO_PROVIDER_ORDER = (
     "openrouter",
     "nous",
+    "xai",
 )
 
 
@@ -1438,6 +1484,8 @@ def _resolve_strict_vision_backend(provider: str) -> Tuple[Optional[Any], Option
         return _try_openrouter()
     if provider == "nous":
         return _try_nous(vision=True)
+    if provider == "xai":
+        return _try_xai()
     if provider == "openai-codex":
         return _try_codex()
     if provider == "anthropic":

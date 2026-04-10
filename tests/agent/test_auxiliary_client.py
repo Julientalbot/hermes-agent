@@ -471,6 +471,24 @@ class TestExplicitProviderRouting:
             client, model = resolve_provider_client("zai")
             assert client is not None
 
+    def test_explicit_xai(self, monkeypatch):
+        """provider='xai' should use XAI_API_KEY and return the default aux model."""
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            client, model = resolve_provider_client("xai")
+            assert client is not None
+            assert model == "grok-4-1-fast-non-reasoning"
+
+    def test_explicit_xai_alias_x_ai(self, monkeypatch):
+        """provider='x-ai' should normalise to xai via _PROVIDER_ALIASES."""
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            client, model = resolve_provider_client("x-ai")
+            assert client is not None
+            assert model == "grok-4-1-fast-non-reasoning"
+
     def test_explicit_google_alias_uses_gemini_credentials(self):
         """provider='google' should route through the gemini API-key provider."""
         with (
@@ -803,6 +821,35 @@ class TestAuxiliaryPoolAwareness:
             client, model = get_vision_auxiliary_client()
         assert model == "google/gemini-3-flash-preview"
         assert client is not None
+
+    def test_vision_uses_xai_when_no_openrouter_no_nous(self, monkeypatch):
+        """When neither OpenRouter nor Nous is available, the vision auto chain
+        must fall back to xAI (grok-4-1-fast-non-reasoning) if XAI_API_KEY is set."""
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+        with patch("agent.auxiliary_client._read_nous_auth", return_value=None), \
+             patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            client, model = get_vision_auxiliary_client()
+        assert client is not None
+        assert model == "grok-4-1-fast-non-reasoning"
+
+    def test_vision_forced_xai_uses_xai_backend(self, monkeypatch):
+        """Explicit provider='xai' in config should resolve to the xAI backend
+        even when OpenRouter is also available (no silent fallback)."""
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        config = {"auxiliary": {"vision": {"provider": "xai"}}}
+        monkeypatch.setattr("hermes_cli.config.load_config", lambda: config)
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            resolved_provider, client, model = resolve_vision_provider_client()
+        assert client is not None
+        assert model == "grok-4-1-fast-non-reasoning"
+        assert resolved_provider == "xai"
+        # Verify the xAI base URL was used, not OpenRouter
+        call_base = mock_openai.call_args.kwargs.get("base_url", "")
+        assert "x.ai" in call_base, f"expected x.ai base URL, got {call_base}"
 
     def test_vision_config_google_provider_uses_gemini_credentials(self, monkeypatch):
         config = {
