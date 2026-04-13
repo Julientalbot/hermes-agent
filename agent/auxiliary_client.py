@@ -113,6 +113,8 @@ _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
 # "exotic provider" branch checks this before falling back to the main model.
 _PROVIDER_VISION_MODELS: Dict[str, str] = {
     "xiaomi": "mimo-v2-omni",
+    "xai": "grok-4.20-0309-non-reasoning",
+    "grok": "grok-4.20-0309-non-reasoning",
 }
 
 # OpenRouter app attribution headers
@@ -1627,6 +1629,7 @@ def get_async_text_auxiliary_client(task: str = "", *, main_runtime: Optional[Di
 _VISION_AUTO_PROVIDER_ORDER = (
     "openrouter",
     "nous",
+    "xai",
 )
 
 
@@ -2611,3 +2614,82 @@ async def async_call_llm(
                 return _validate_llm_response(
                     await async_fb.chat.completions.create(**fb_kwargs), task)
         raise
+
+
+def generate_image(
+    prompt: str,
+    model: str = "grok-imagine-image",
+    n: int = 1,
+    aspect_ratio: str = None,
+    resolution: str = None,
+    image_url: str = None,
+    image_format: str = None,
+    **kwargs,
+) -> str:
+    """Generate an image using xAI's Grok image generation model.
+
+    Returns the local path to the downloaded image (preferred) or the URL if
+    download fails. URLs are temporary per xAI docs.
+
+    xAI API params (per https://docs.x.ai/developers/model-capabilities/images/generation):
+      - prompt: text description
+      - model: grok-imagine-image or grok-imagine-image-pro
+      - n: number of images (batch)
+      - aspect_ratio: "1:1", "16:9", "4:3", "3:2", "2:1", "auto", etc.
+      - resolution: "1k" or "2k"
+      - image_url: source image for editing (base64 data URI or public URL)
+      - image_format: "url" (default) or "base64"
+
+    NOTE: xAI does NOT support the `size` or `quality` params from the OpenAI
+    SDK. Only the params listed above are valid.
+    """
+    import uuid
+    from pathlib import Path
+    import requests
+
+    # Resolve xAI credentials — try credential pool first, then env var.
+    # (_try_xai only exists on feat/auxiliary-vision-xai-backend branch.)
+    pool_present, entry = _select_pool_entry("xai")
+    if pool_present:
+        _key = _pool_runtime_api_key(entry)
+        _base = _pool_runtime_base_url(entry, "https://api.x.ai/v1") or "https://api.x.ai/v1"
+    else:
+        _key = os.getenv("XAI_API_KEY")
+        _base = "https://api.x.ai/v1"
+
+    if not _key:
+        raise RuntimeError("XAI_API_KEY not configured (env or credential pool)")
+
+    client = OpenAI(api_key=_key, base_url=_base)
+
+    generate_kwargs: dict = {"model": model, "prompt": prompt}
+    if n is not None and n > 1:
+        generate_kwargs["n"] = n
+    if aspect_ratio is not None:
+        generate_kwargs["aspect_ratio"] = aspect_ratio
+    if resolution is not None:
+        generate_kwargs["resolution"] = resolution
+    if image_url is not None:
+        generate_kwargs["image_url"] = image_url
+    if image_format is not None:
+        generate_kwargs["image_format"] = image_format
+    # Pass through any extra xAI-supported kwargs
+    generate_kwargs.update(kwargs)
+
+    response = client.images.generate(**generate_kwargs)
+
+    if not response.data or not getattr(response.data[0], "url", None):
+        raise RuntimeError("No image URL in xAI response")
+
+    image_url_out = response.data[0].url
+
+    # Download to local file (URLs are temporary per xAI docs)
+    local_path = Path("/tmp") / f"xai_gen_{uuid.uuid4().hex[:12]}.jpg"
+    try:
+        img_data = requests.get(image_url_out, timeout=20).content
+        local_path.write_bytes(img_data)
+        logger.info("xAI image generated successfully: %s", local_path)
+        return str(local_path)
+    except Exception as download_err:  # noqa: BLE001
+        logger.warning("Could not download image, returning URL: %s", download_err)
+        return image_url_out

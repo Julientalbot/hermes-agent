@@ -117,6 +117,30 @@ class BrowserUseProvider(CloudBrowserProvider):
         }
         return headers
 
+    def _read_profile_id(self) -> Optional[str]:
+        """Read browser.profile_id from config.yaml."""
+        try:
+            from hermes_cli.config import read_raw_config
+            cfg = read_raw_config()
+            profile_id = cfg.get("browser", {}).get("profile_id")
+            if profile_id:
+                return str(profile_id)
+        except Exception as e:
+            logger.debug("Could not read profile_id from config: %s", e)
+        return None
+
+    def _read_proxy_country_code(self) -> Optional[str]:
+        """Read browser.proxy_country_code from config.yaml."""
+        try:
+            from hermes_cli.config import read_raw_config
+            cfg = read_raw_config()
+            code = cfg.get("browser", {}).get("proxy_country_code")
+            if code:
+                return str(code)
+        except Exception as e:
+            logger.debug("Could not read proxy_country_code from config: %s", e)
+        return None
+
     def create_session(self, task_id: str) -> Dict[str, object]:
         config = self._get_config()
         managed_mode = bool(config.get("managed_mode"))
@@ -136,6 +160,17 @@ class BrowserUseProvider(CloudBrowserProvider):
             if managed_mode
             else {}
         )
+
+        # Read profile_id and proxy_country_code from config.yaml
+        # These enable persistent cookies (login sessions) across browser sessions.
+        profile_id = self._read_profile_id()
+        if profile_id:
+            payload["profileId"] = profile_id
+            logger.info("Using Browser Use profile %s", profile_id)
+
+        proxy_code = self._read_proxy_country_code()
+        if proxy_code and "proxyCountryCode" not in payload:
+            payload["proxyCountryCode"] = proxy_code
 
         response = requests.post(
             f"{config['base_url']}/browsers",

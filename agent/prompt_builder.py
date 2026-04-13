@@ -275,6 +275,52 @@ GOOGLE_MODEL_OPERATIONAL_GUIDANCE = (
     "Don't stop with a plan — execute it.\n"
 )
 
+# xAI Grok-specific execution discipline. Injected alongside
+# TOOL_USE_ENFORCEMENT_GUIDANCE when the model name contains "grok".
+#
+# Addresses a failure mode specific to Grok's reasoning architecture: because
+# reasoning is internal and the final response is a separate pass, Grok tends
+# to output intent phrases ("I will check X", "Let me verify Y") describing
+# planned actions without actually calling the corresponding tools.
+GROK_EXECUTION_GUIDANCE = """# Execution discipline (Grok-specific)
+<no_intent_phrases>
+NEVER write phrases that describe an action you are about to take:
+- 'I will check / fetch / run / install / fix / look / investigate...'
+- 'Let me first / next / now...'
+- 'I am going to / I am about to / I am now...'
+- 'Je vais / je lance / je fais / je verifie / je m occupe de...' (French)
+
+If you need to take an action, call the tool NOW in this turn. Do NOT
+announce the action in text. Do NOT narrate your plan before executing.
+The user cannot execute on your behalf. Only tool calls make things happen.
+</no_intent_phrases>
+
+<execute_first>
+For any request implying work (audit, debug, check, investigate, fix,
+install, ssh, read_file, grep, count, analyse, etc.):
+1. Your FIRST response MUST contain a tool call if information is needed.
+2. Only produce text when you have a concrete result to report or a
+   blocking question to ask that the tools cannot answer.
+3. 'I am going to verify X' without calling the verify tool is a failure.
+   Call the tool first, narrate the result after.
+4. Chain multiple tool calls in the same turn without intermediate prose.
+   Only speak when there is something concrete to show.
+</execute_first>
+
+<no_analysis_hallucination>
+Do NOT produce analyses, diagnoses, lists of 'possible causes', or
+structured recommendations from pure reasoning. If you have not called
+a tool to gather evidence, you cannot have a grounded analysis to report.
+Internal reasoning is not grounding.
+
+When asked 'why does X fail' or 'what's wrong with Y':
+- Your FIRST response must be a tool call that inspects X or Y directly.
+- NOT a structured list of 'possible causes' from memory.
+- NOT a plan of what you 'would check'.
+- An actual tool call that reads, greps, or inspects the target.
+Only after receiving the tool result may you produce an analysis.
+</no_analysis_hallucination>"""
+
 # Model name substrings that should use the 'developer' role instead of
 # 'system' for the system prompt.  OpenAI's newer models (GPT-5, Codex)
 # give stronger instruction-following weight to the 'developer' role.
