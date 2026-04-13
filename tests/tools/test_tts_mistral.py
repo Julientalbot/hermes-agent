@@ -1,6 +1,7 @@
 """Tests for the Mistral (Voxtral) TTS provider in tools/tts_tool.py."""
 
 import base64
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -216,7 +217,8 @@ class TestCheckTtsRequirementsMistral:
         with patch("tools.tts_tool._import_edge_tts", side_effect=ImportError), \
              patch("tools.tts_tool._import_elevenlabs", side_effect=ImportError), \
              patch("tools.tts_tool._import_openai_client", side_effect=ImportError), \
-             patch("tools.tts_tool._check_neutts_available", return_value=False):
+             patch("tools.tts_tool._check_neutts_available", return_value=False), \
+             patch.dict(os.environ, {"MINIMAX_API_KEY": "", "XAI_API_KEY": ""}, clear=False):
             assert check_tts_requirements() is False
 
 

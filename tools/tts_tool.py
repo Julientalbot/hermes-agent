@@ -8,6 +8,7 @@ Supports six TTS providers:
 - OpenAI TTS: Good quality, needs OPENAI_API_KEY
 - MiniMax TTS: High-quality with voice cloning, needs MINIMAX_API_KEY
 - Mistral (Voxtral TTS): Multilingual, native Opus, needs MISTRAL_API_KEY
+- xAI TTS: 6 multilingual Grok voices (ara/eve/leo/rex/sal/una), needs XAI_API_KEY
 - NeuTTS (local, free, no API key): On-device TTS via neutts_cli, needs neutts installed
 
 Output formats:
@@ -91,6 +92,7 @@ DEFAULT_MINIMAX_VOICE_ID = "English_Graceful_Lady"
 DEFAULT_MINIMAX_BASE_URL = "https://api.minimax.io/v1/t2a_v2"
 DEFAULT_MISTRAL_TTS_MODEL = "voxtral-mini-tts-2603"
 DEFAULT_MISTRAL_TTS_VOICE_ID = "c69964a6-ab8b-4f8a-9465-ec0925096ec8"  # Paul - Neutral
+DEFAULT_XAI_TTS_VOICE = "sal"  # Sal - multilingual
 
 def _get_default_output_dir() -> str:
     from hermes_constants import get_hermes_dir
@@ -434,6 +436,84 @@ def _generate_mistral_tts(text: str, output_path: str, tts_config: Dict[str, Any
 
 
 # ===========================================================================
+# Provider: xAI TTS (Grok voices)
+# ===========================================================================
+def _generate_xai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+    """Generate audio using xAI's TTS API.
+
+    xAI TTS supports 6 multilingual voices: ara, eve, leo, rex, sal, una.
+    Max 15,000 characters per request.  Supported codecs: mp3, wav, pcm,
+    mulaw, alaw.  Pricing: $4.20 per 1M characters.
+    Speech tags: [pause], [laugh], [whisper], etc.
+
+    Docs: https://docs.x.ai/developers/model-capabilities/voice/tts
+    """
+    import requests
+
+    # Resolve credentials.
+    api_key = os.getenv("XAI_API_KEY", "")
+    base_url = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
+    if not api_key:
+        raise ValueError("XAI_API_KEY not set. Get one at https://console.x.ai/")
+
+    xai_config = tts_config.get("xai", {})
+    voice = xai_config.get("voice", DEFAULT_XAI_TTS_VOICE)
+    language = xai_config.get("language", "auto")
+
+    # Determine codec from output extension.
+    if output_path.endswith(".wav"):
+        codec = "wav"
+    elif output_path.endswith(".ogg"):
+        # xAI doesn't support Opus natively — generate mp3, convert later.
+        codec = "mp3"
+    else:
+        codec = "mp3"
+
+    payload = {
+        "text": text,
+        "voice_id": voice,
+        "language": language,
+        "codec": codec,
+    }
+    # Optional sample_rate override.
+    sample_rate = xai_config.get("sample_rate")
+    if sample_rate:
+        payload["sample_rate"] = int(sample_rate)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    response = requests.post(
+        f"{base_url}/tts", json=payload, headers=headers, timeout=60,
+    )
+    response.raise_for_status()
+
+    # xAI returns raw audio bytes in the response body.
+    audio_data = response.content
+    if not audio_data:
+        raise RuntimeError("xAI TTS returned empty audio data")
+
+    # If the caller wants .ogg but we got mp3, write mp3 first then convert.
+    if output_path.endswith(".ogg"):
+        mp3_path = output_path.rsplit(".", 1)[0] + ".mp3"
+        with open(mp3_path, "wb") as f:
+            f.write(audio_data)
+        opus_path = _convert_to_opus(mp3_path)
+        if opus_path:
+            os.remove(mp3_path)
+            return opus_path
+        # Conversion failed — rename mp3 to output_path as fallback.
+        os.rename(mp3_path, output_path)
+    else:
+        with open(output_path, "wb") as f:
+            f.write(audio_data)
+
+    return output_path
+
+
+# ===========================================================================
 # NeuTTS (local, on-device TTS via neutts_cli)
 # ===========================================================================
 
@@ -610,6 +690,10 @@ def text_to_speech_tool(
             logger.info("Generating speech with Mistral Voxtral TTS...")
             _generate_mistral_tts(text, file_str, tts_config)
 
+        elif provider == "xai":
+            logger.info("Generating speech with xAI TTS...")
+            _generate_xai_tts(text, file_str, tts_config)
+
         elif provider == "neutts":
             if not _check_neutts_available():
                 return json.dumps({
@@ -659,7 +743,7 @@ def text_to_speech_tool(
         # Try Opus conversion for Telegram compatibility
         # Edge TTS outputs MP3, NeuTTS outputs WAV — both need ffmpeg conversion
         voice_compatible = False
-        if provider in ("edge", "neutts", "minimax") and not file_str.endswith(".ogg"):
+        if provider in ("edge", "neutts", "minimax", "xai") and not file_str.endswith(".ogg"):
             opus_path = _convert_to_opus(file_str)
             if opus_path:
                 file_str = opus_path
@@ -731,6 +815,8 @@ def check_tts_requirements() -> bool:
     except ImportError:
         pass
     if os.getenv("MINIMAX_API_KEY"):
+        return True
+    if os.getenv("XAI_API_KEY"):
         return True
     try:
         _import_mistral_client()
