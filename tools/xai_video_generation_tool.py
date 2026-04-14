@@ -15,28 +15,17 @@ Docs: https://docs.x.ai/developers/model-capabilities/video/generation
 
 import json
 import logging
-import os
 import time
 import uuid
 from pathlib import Path
+
+from tools.xai_utils import check_xai_tool_available, resolve_xai_credentials
 
 logger = logging.getLogger(__name__)
 
 # Polling constants
 _POLL_INTERVAL_SECONDS = 5
 _POLL_MAX_WAIT_SECONDS = 300  # 5 minutes max wait
-
-
-def _check_xai_video_available() -> bool:
-    """Check if xAI video generation is available (XAI_API_KEY set)."""
-    return bool(os.getenv("XAI_API_KEY"))
-
-
-def _resolve_xai_credentials():
-    """Return (api_key, base_url) for xAI."""
-    key = os.getenv("XAI_API_KEY")
-    base = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
-    return key, base
 
 
 def xai_video_generate(
@@ -63,7 +52,7 @@ def xai_video_generate(
     """
     import requests
 
-    api_key, base_url = _resolve_xai_credentials()
+    api_key, base_url = resolve_xai_credentials()
     if not api_key:
         return json.dumps({
             "success": False,
@@ -262,7 +251,7 @@ registry.register(
     toolset="image_gen",
     schema=XAI_VIDEO_GENERATE_SCHEMA,
     handler=_handle_xai_video_generate,
-    check_fn=_check_xai_video_available,
+    check_fn=lambda: check_xai_tool_available("xai_video_generate"),
     requires_env=[],
     is_async=False,
     emoji="🎬",
