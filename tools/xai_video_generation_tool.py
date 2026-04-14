@@ -13,9 +13,9 @@ Pricing: $0.05 per second of generated video.
 Docs: https://docs.x.ai/developers/model-capabilities/video/generation
 """
 
+import asyncio
 import json
 import logging
-import time
 import uuid
 from pathlib import Path
 
@@ -28,7 +28,7 @@ _POLL_INTERVAL_SECONDS = 5
 _POLL_MAX_WAIT_SECONDS = 300  # 5 minutes max wait
 
 
-def xai_video_generate(
+async def xai_video_generate(
     prompt: str,
     duration: int = None,
     aspect_ratio: str = None,
@@ -40,6 +40,10 @@ def xai_video_generate(
     This function submits the generation request and polls until the video
     is ready, then downloads it to a local file.
 
+    Uses ``asyncio.sleep()`` for polling so the event loop is never blocked
+    (the previous ``time.sleep()`` implementation would block the agent for
+    up to 5 minutes).
+
     Args:
         prompt: Text description of the desired video.
         duration: Video duration in seconds (default: API decides).
@@ -50,7 +54,7 @@ def xai_video_generate(
     Returns:
         JSON string with success status and video path or error.
     """
-    import requests
+    import httpx
 
     api_key, base_url = resolve_xai_credentials()
     if not api_key:
@@ -83,14 +87,14 @@ def xai_video_generate(
 
     # Step 1: Submit generation request.
     try:
-        submit_resp = requests.post(
-            f"{base_url}/videos/generations",
-            json=payload,
-            headers=headers,
-            timeout=30,
-        )
-        submit_resp.raise_for_status()
-        submit_data = submit_resp.json()
+        async with httpx.AsyncClient(timeout=30) as client:
+            submit_resp = await client.post(
+                f"{base_url}/videos/generations",
+                json=payload,
+                headers=headers,
+            )
+            submit_resp.raise_for_status()
+            submit_data = submit_resp.json()
     except Exception as e:
         logger.error("xAI video generation submit failed: %s", e, exc_info=True)
         return json.dumps({"success": False, "error": f"Submit failed: {e}"})
@@ -104,16 +108,17 @@ def xai_video_generate(
 
     logger.info("xAI video generation submitted: request_id=%s", request_id)
 
-    # Step 2: Poll for completion.
-    start_time = time.time()
+    # Step 2: Poll for completion (async – does not block the event loop).
+    elapsed = 0
     last_progress = -1
-    while time.time() - start_time < _POLL_MAX_WAIT_SECONDS:
-        time.sleep(_POLL_INTERVAL_SECONDS)
+    async with httpx.AsyncClient(timeout=15) as poll_client:
+      while elapsed < _POLL_MAX_WAIT_SECONDS:
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+        elapsed += _POLL_INTERVAL_SECONDS
         try:
-            poll_resp = requests.get(
+            poll_resp = await poll_client.get(
                 f"{base_url}/videos/{request_id}",
                 headers={"Authorization": f"Bearer {api_key}"},
-                timeout=15,
             )
             poll_resp.raise_for_status()
             poll_data = poll_resp.json()
@@ -152,7 +157,9 @@ def xai_video_generate(
             local_path = output_dir / f"xai_vid_{uuid.uuid4().hex[:12]}.mp4"
 
             try:
-                vid_data = requests.get(video_url, timeout=60).content
+                async with httpx.AsyncClient(timeout=60) as dl_client:
+                    vid_resp = await dl_client.get(video_url)
+                    vid_data = vid_resp.content
                 local_path.write_bytes(vid_data)
                 logger.info("xAI video downloaded: %s (%d bytes)", local_path, len(vid_data))
                 media_tag = f"MEDIA:{local_path}"
@@ -233,11 +240,11 @@ XAI_VIDEO_GENERATE_SCHEMA = {
 }
 
 
-def _handle_xai_video_generate(args, **kw):
+async def _handle_xai_video_generate(args, **kw):
     prompt = args.get("prompt", "")
     if not prompt:
         return tool_error("prompt is required for video generation")
-    return xai_video_generate(
+    return await xai_video_generate(
         prompt=prompt,
         duration=args.get("duration"),
         aspect_ratio=args.get("aspect_ratio"),
@@ -253,6 +260,6 @@ registry.register(
     handler=_handle_xai_video_generate,
     check_fn=lambda: check_xai_tool_available("xai_video_generate"),
     requires_env=[],
-    is_async=False,
-    emoji="🎬",
+    is_async=True,
+    emoji="\U0001f3ac",
 )
