@@ -112,78 +112,78 @@ async def xai_video_generate(
     elapsed = 0
     last_progress = -1
     async with httpx.AsyncClient(timeout=15) as poll_client:
-      while elapsed < _POLL_MAX_WAIT_SECONDS:
-        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-        elapsed += _POLL_INTERVAL_SECONDS
-        try:
-            poll_resp = await poll_client.get(
-                f"{base_url}/videos/{request_id}",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            poll_resp.raise_for_status()
-            poll_data = poll_resp.json()
-        except Exception as e:
-            logger.warning("Poll failed (will retry): %s", e)
-            continue
-
-        status = poll_data.get("status", "unknown")
-        progress = poll_data.get("progress", 0)
-
-        if progress != last_progress:
-            logger.info("Video generation %s: %d%% complete", request_id, progress)
-            last_progress = progress
-
-        if status == "done":
-            video_url = poll_data.get("video_url") or poll_data.get("url")
-            if not video_url:
-                # xAI nests the URL under "video": {"url": "..."}
-                video_obj = poll_data.get("video", {})
-                if isinstance(video_obj, dict):
-                    video_url = video_obj.get("url")
-            if not video_url:
-                # Last resort: check "data" wrapper.
-                data = poll_data.get("data", {})
-                video_url = data.get("video_url") or data.get("url")
-            if not video_url:
-                return json.dumps({
-                    "success": False,
-                    "error": f"Video done but no URL found in response: {json.dumps(poll_data)[:300]}",
-                })
-
-            # Download the video.
-            from hermes_constants import get_hermes_home
-            output_dir = Path(get_hermes_home()) / "videos"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            local_path = output_dir / f"xai_vid_{uuid.uuid4().hex[:12]}.mp4"
-
+        while elapsed < _POLL_MAX_WAIT_SECONDS:
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            elapsed += _POLL_INTERVAL_SECONDS
             try:
-                async with httpx.AsyncClient(timeout=60) as dl_client:
-                    vid_resp = await dl_client.get(video_url)
-                    vid_data = vid_resp.content
-                local_path.write_bytes(vid_data)
-                logger.info("xAI video downloaded: %s (%d bytes)", local_path, len(vid_data))
-                media_tag = f"MEDIA:{local_path}"
-                return json.dumps({
-                    "success": True,
-                    "video": str(local_path),
-                    "media_tag": media_tag,
-                    "duration_seconds": poll_data.get("duration") or (video_obj.get("duration") if isinstance(poll_data.get("video"), dict) else None),
-                })
-            except Exception as dl_err:
-                logger.warning("Could not download video, returning URL: %s", dl_err)
-                media_tag = f"MEDIA:{video_url}"
-                return json.dumps({
-                    "success": True,
-                    "video": video_url,
-                    "media_tag": media_tag,
-                })
+                poll_resp = await poll_client.get(
+                    f"{base_url}/videos/{request_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                poll_resp.raise_for_status()
+                poll_data = poll_resp.json()
+            except Exception as e:
+                logger.warning("Poll failed (will retry): %s", e)
+                continue
 
-        elif status == "failed":
-            error_msg = poll_data.get("error", "Unknown generation error")
-            return json.dumps({"success": False, "error": f"Generation failed: {error_msg}"})
+            status = poll_data.get("status", "unknown")
+            progress = poll_data.get("progress", 0)
 
-        elif status == "expired":
-            return json.dumps({"success": False, "error": "Generation request expired"})
+            if progress != last_progress:
+                logger.info("Video generation %s: %d%% complete", request_id, progress)
+                last_progress = progress
+
+            if status == "done":
+                video_url = poll_data.get("video_url") or poll_data.get("url")
+                if not video_url:
+                    # xAI nests the URL under "video": {"url": "..."}
+                    video_obj = poll_data.get("video", {})
+                    if isinstance(video_obj, dict):
+                        video_url = video_obj.get("url")
+                if not video_url:
+                    # Last resort: check "data" wrapper.
+                    data = poll_data.get("data", {})
+                    video_url = data.get("video_url") or data.get("url")
+                if not video_url:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Video done but no URL found in response: {json.dumps(poll_data)[:300]}",
+                    })
+
+                # Download the video.
+                from hermes_constants import get_hermes_home
+                output_dir = Path(get_hermes_home()) / "videos"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                local_path = output_dir / f"xai_vid_{uuid.uuid4().hex[:12]}.mp4"
+
+                try:
+                    async with httpx.AsyncClient(timeout=60) as dl_client:
+                        vid_resp = await dl_client.get(video_url)
+                        vid_data = vid_resp.content
+                    local_path.write_bytes(vid_data)
+                    logger.info("xAI video downloaded: %s (%d bytes)", local_path, len(vid_data))
+                    media_tag = f"MEDIA:{local_path}"
+                    return json.dumps({
+                        "success": True,
+                        "video": str(local_path),
+                        "media_tag": media_tag,
+                        "duration_seconds": poll_data.get("duration") or (video_obj.get("duration") if isinstance(poll_data.get("video"), dict) else None),
+                    })
+                except Exception as dl_err:
+                    logger.warning("Could not download video, returning URL: %s", dl_err)
+                    media_tag = f"MEDIA:{video_url}"
+                    return json.dumps({
+                        "success": True,
+                        "video": video_url,
+                        "media_tag": media_tag,
+                    })
+
+            elif status == "failed":
+                error_msg = poll_data.get("error", "Unknown generation error")
+                return json.dumps({"success": False, "error": f"Generation failed: {error_msg}"})
+
+            elif status == "expired":
+                return json.dumps({"success": False, "error": "Generation request expired"})
 
     return json.dumps({
         "success": False,
