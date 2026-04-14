@@ -100,6 +100,7 @@ def _get_default_output_dir() -> str:
 
 DEFAULT_OUTPUT_DIR = _get_default_output_dir()
 MAX_TEXT_LENGTH = 4000
+XAI_MAX_TEXT_LENGTH = 15000  # xAI API hard limit per request
 
 
 # ===========================================================================
@@ -455,6 +456,14 @@ def _generate_xai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -
     base_url = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
     if not api_key:
         raise ValueError("XAI_API_KEY not set. Get one at https://console.x.ai/")
+
+    # Enforce xAI 15k character limit.
+    if len(text) > XAI_MAX_TEXT_LENGTH:
+        logger.warning(
+            "xAI TTS text too long (%d chars), truncating to %d",
+            len(text), XAI_MAX_TEXT_LENGTH,
+        )
+        text = text[:XAI_MAX_TEXT_LENGTH]
 
     xai_config = tts_config.get("xai", {})
     voice = xai_config.get("voice", DEFAULT_XAI_TTS_VOICE)
