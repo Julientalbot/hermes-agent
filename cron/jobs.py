@@ -12,7 +12,7 @@ import tempfile
 import os
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Optional, Dict, List, Any
@@ -177,7 +177,13 @@ def parse_schedule(schedule: str) -> Dict[str, Any]:
             # (set via HERMES_TIMEZONE env var or timezone key in config.yaml).
             if dt.tzinfo is None:
                 hermes_tz = _hermes_get_tz()
-                if hermes_tz is not None:
+                # Defensive: get_timezone() is typed to return Optional[ZoneInfo],
+                # but guard in case a future refactor returns a string name or
+                # any object without tzinfo-protocol support.  dt.replace() would
+                # otherwise raise an opaque error at runtime.  Note: assigning a
+                # ZoneInfo via replace() during a DST transition defaults to the
+                # standard-time offset — acceptable for cron scheduling.
+                if hermes_tz is not None and isinstance(hermes_tz, tzinfo):
                     dt = dt.replace(tzinfo=hermes_tz)
                 else:
                     dt = dt.astimezone()  # Fallback: interpret as system local

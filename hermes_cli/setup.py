@@ -1465,28 +1465,50 @@ def setup_timezone(config: dict):
     print_info("causing reminders to fire at the wrong time.")
     print()
 
-    # Detect current system timezone
-    import subprocess
+    # Detect current system timezone.
+    # macOS: prefer reading /etc/localtime symlink (no elevated privileges needed,
+    # works on all recent macOS versions); fall back to `systemsetup -gettimezone`.
+    # Linux: try `timedatectl` first, then /etc/timezone, then /etc/localtime.
+    import subprocess  # local import: only needed in this setup path
     detected_tz = ""
+
+    def _tz_from_localtime() -> str:
+        link = Path("/etc/localtime")
+        try:
+            if link.is_symlink():
+                target = str(link.resolve())
+                if "zoneinfo/" in target:
+                    return target.split("zoneinfo/", 1)[1]
+        except OSError:
+            pass
+        return ""
+
     try:
         if sys.platform == "darwin":
-            result = subprocess.run(
-                ["systemsetup", "-gettimezone"],
-                capture_output=True, text=True, timeout=5,
-            )
-            # Output: "Time Zone: Europe/Paris"
-            if result.returncode == 0 and ":" in result.stdout:
-                detected_tz = result.stdout.split(":", 1)[1].strip()
+            detected_tz = _tz_from_localtime()
+            if not detected_tz:
+                result = subprocess.run(
+                    ["systemsetup", "-gettimezone"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                # Output: "Time Zone: Europe/Paris"
+                if result.returncode == 0 and ":" in result.stdout:
+                    detected_tz = result.stdout.split(":", 1)[1].strip()
         else:
-            # Linux: try timedatectl first, then /etc/timezone
-            result = subprocess.run(
-                ["timedatectl", "show", "-p", "Timezone", "--value"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                detected_tz = result.stdout.strip()
-            elif Path("/etc/timezone").exists():
+            # Linux: try timedatectl first, then /etc/timezone, then /etc/localtime
+            try:
+                result = subprocess.run(
+                    ["timedatectl", "show", "-p", "Timezone", "--value"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0:
+                    detected_tz = result.stdout.strip()
+            except FileNotFoundError:
+                pass
+            if not detected_tz and Path("/etc/timezone").exists():
                 detected_tz = Path("/etc/timezone").read_text().strip()
+            if not detected_tz:
+                detected_tz = _tz_from_localtime()
     except Exception:
         pass
 
@@ -1518,13 +1540,19 @@ def setup_timezone(config: dict):
         tz_value = tz_input.strip()
         # Validate the timezone
         try:
-            from zoneinfo import ZoneInfo
-            ZoneInfo(tz_value)  # Raises ZoneInfoNotFoundError if invalid
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        except ImportError:
+            print_warning("zoneinfo unavailable — cannot validate. Saving as-is.")
             config["timezone"] = tz_value
-            print_success(f"Timezone set to {tz_value}")
-        except Exception:
-            print_warning(f"'{tz_value}' is not a valid IANA timezone ID.")
-            print_info("Skipping timezone configuration. You can set it later in config.yaml.")
+            print_success(f"Timezone set to {tz_value} (unvalidated)")
+        else:
+            try:
+                ZoneInfo(tz_value)  # Raises ZoneInfoNotFoundError if invalid
+                config["timezone"] = tz_value
+                print_success(f"Timezone set to {tz_value}")
+            except (ZoneInfoNotFoundError, ValueError):
+                print_warning(f"'{tz_value}' is not a valid IANA timezone ID.")
+                print_info("Skipping timezone configuration. You can set it later in config.yaml.")
     else:
         print_info("Timezone not configured. Cron jobs will use the server's system timezone.")
 

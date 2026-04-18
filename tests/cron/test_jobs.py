@@ -103,6 +103,57 @@ class TestParseSchedule:
         assert result["kind"] == "once"
         assert "2030-01-15" in result["run_at"]
 
+    def test_naive_iso_uses_configured_tz(self, monkeypatch):
+        """Naive ISO timestamps must be interpreted in the Hermes-configured
+        timezone, not the server's system timezone.  This is the core bug
+        this module was patched to fix."""
+        from zoneinfo import ZoneInfo
+        kolkata = ZoneInfo("Asia/Kolkata")  # UTC+5:30, no DST
+        monkeypatch.setattr("cron.jobs._hermes_get_tz", lambda: kolkata)
+
+        result = parse_schedule("2030-06-15T14:00:00")
+
+        assert result["kind"] == "once"
+        dt = datetime.fromisoformat(result["run_at"])
+        assert dt.tzinfo is not None, "naive timestamp should be made tz-aware"
+        # Wall-clock preserved (14:00), and offset reflects Asia/Kolkata
+        assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (2030, 6, 15, 14, 0)
+        assert dt.utcoffset() == timedelta(hours=5, minutes=30)
+
+    def test_naive_iso_fallback_when_no_tz_configured(self, monkeypatch):
+        """When no Hermes timezone is configured, naive timestamps fall back
+        to the original astimezone() behavior (system local).  Guarantees
+        backward compatibility — no breaking change for existing deployments."""
+        monkeypatch.setattr("cron.jobs._hermes_get_tz", lambda: None)
+
+        result = parse_schedule("2030-06-15T14:00:00")
+
+        assert result["kind"] == "once"
+        dt = datetime.fromisoformat(result["run_at"])
+        assert dt.tzinfo is not None
+        # Wall-clock preserved; offset is whatever the system reports
+        assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (2030, 6, 15, 14, 0)
+
+    def test_naive_iso_guards_against_non_tzinfo_return(self, monkeypatch):
+        """Defensive: if _hermes_get_tz() ever returns a non-tzinfo object
+        (e.g. a string name from a future refactor), parse_schedule must
+        fall back safely instead of raising an opaque TypeError at runtime."""
+        monkeypatch.setattr("cron.jobs._hermes_get_tz", lambda: "Europe/Paris")
+
+        result = parse_schedule("2030-06-15T14:00:00")
+
+        assert result["kind"] == "once"
+        dt = datetime.fromisoformat(result["run_at"])
+        assert dt.tzinfo is not None, "should fall back to astimezone()"
+
+    def test_aware_iso_timestamp_preserved(self):
+        """A timezone-aware ISO timestamp must be passed through unchanged —
+        the user explicitly declared the zone and must not be overridden."""
+        result = parse_schedule("2030-06-15T14:00:00+09:00")
+        assert result["kind"] == "once"
+        dt = datetime.fromisoformat(result["run_at"])
+        assert dt.utcoffset() == timedelta(hours=9)
+
     def test_invalid_schedule_raises(self):
         with pytest.raises(ValueError):
             parse_schedule("not_a_schedule")
