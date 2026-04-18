@@ -19,7 +19,7 @@ from typing import Optional, Dict, List, Any
 
 logger = logging.getLogger(__name__)
 
-from hermes_time import now as _hermes_now
+from hermes_time import now as _hermes_now, get_timezone as _hermes_get_tz
 
 try:
     from croniter import croniter
@@ -172,8 +172,15 @@ def parse_schedule(schedule: str) -> Dict[str, Any]:
             dt = datetime.fromisoformat(schedule.replace('Z', '+00:00'))
             # Make naive timestamps timezone-aware at parse time so the stored
             # value doesn't depend on the system timezone matching at check time.
+            # When the user says "17:30", they mean 17:30 in THEIR timezone,
+            # not the server's.  Use the Hermes-configured timezone when available
+            # (set via HERMES_TIMEZONE env var or timezone key in config.yaml).
             if dt.tzinfo is None:
-                dt = dt.astimezone()  # Interpret as local timezone
+                hermes_tz = _hermes_get_tz()
+                if hermes_tz is not None:
+                    dt = dt.replace(tzinfo=hermes_tz)
+                else:
+                    dt = dt.astimezone()  # Fallback: interpret as system local
             return {
                 "kind": "once",
                 "run_at": dt.isoformat(),

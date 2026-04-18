@@ -1448,6 +1448,89 @@ def _apply_default_agent_settings(config: dict):
     print_info("  Run `hermes setup agent` later to customize.")
 
 
+def setup_timezone(config: dict):
+    """Configure the IANA timezone for cron jobs and timestamps.
+
+    When a user creates a cron job with a naive timestamp like "17:30",
+    Hermes needs to know which timezone that refers to.  On servers
+    running UTC (most VPS), "17:30" would fire at 17:30 UTC — often
+    not what the user expects.
+
+    The timezone is stored in config.yaml and also available via
+    the HERMES_TIMEZONE environment variable.
+    """
+    print_header("Timezone")
+    print_info("Used by cron jobs to interpret naive timestamps (e.g. \"17:30\").")
+    print_info("If unset, the server's system timezone is used — which is UTC on most VPS,")
+    print_info("causing reminders to fire at the wrong time.")
+    print()
+
+    # Detect current system timezone
+    import subprocess
+    detected_tz = ""
+    try:
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["systemsetup", "-gettimezone"],
+                capture_output=True, text=True, timeout=5,
+            )
+            # Output: "Time Zone: Europe/Paris"
+            if result.returncode == 0 and ":" in result.stdout:
+                detected_tz = result.stdout.split(":", 1)[1].strip()
+        else:
+            # Linux: try timedatectl first, then /etc/timezone
+            result = subprocess.run(
+                ["timedatectl", "show", "-p", "Timezone", "--value"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                detected_tz = result.stdout.strip()
+            elif Path("/etc/timezone").exists():
+                detected_tz = Path("/etc/timezone").read_text().strip()
+    except Exception:
+        pass
+
+    current_tz = config.get("timezone", "") or ""
+    env_tz = os.environ.get("HERMES_TIMEZONE", "").strip()
+
+    if env_tz:
+        print_info(f"HERMES_TIMEZONE env var is set to: {env_tz}")
+        print_info("(env var takes precedence over config.yaml)")
+        print()
+
+    if current_tz:
+        print_info(f"Current config.yaml timezone: {current_tz}")
+    elif detected_tz:
+        print_info(f"Detected system timezone: {detected_tz}")
+    else:
+        print_info("No timezone detected.")
+
+    print()
+    print_info("Common IANA timezone IDs:")
+    print_info("  Europe/Paris, Europe/London, America/New_York, America/Los_Angeles,")
+    print_info("  Asia/Tokyo, Asia/Kolkata, Indian/Reunion, Pacific/Auckland, UTC")
+    print()
+
+    default_val = current_tz or env_tz or detected_tz or ""
+    tz_input = prompt("Timezone (IANA ID, or empty to skip)", default_val)
+
+    if tz_input.strip():
+        tz_value = tz_input.strip()
+        # Validate the timezone
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(tz_value)  # Raises ZoneInfoNotFoundError if invalid
+            config["timezone"] = tz_value
+            print_success(f"Timezone set to {tz_value}")
+        except Exception:
+            print_warning(f"'{tz_value}' is not a valid IANA timezone ID.")
+            print_info("Skipping timezone configuration. You can set it later in config.yaml.")
+    else:
+        print_info("Timezone not configured. Cron jobs will use the server's system timezone.")
+
+    save_config(config)
+
+
 def setup_agent_settings(config: dict):
     """Configure agent behavior: iterations, progress display, compression, session reset."""
 
@@ -2724,6 +2807,7 @@ SETUP_SECTIONS = [
     ("model", "Model & Provider", setup_model_provider),
     ("tts", "Text-to-Speech", setup_tts),
     ("terminal", "Terminal Backend", setup_terminal_backend),
+    ("timezone", "Timezone", setup_timezone),
     ("gateway", "Messaging Platforms (Gateway)", setup_gateway),
     ("tools", "Tools", setup_tools),
     ("agent", "Agent Settings", setup_agent_settings),
@@ -2735,6 +2819,7 @@ SETUP_SECTIONS = [
 RETURNING_USER_MENU_SECTION_KEYS = [
     "model",
     "terminal",
+    "timezone",
     "gateway",
     "tools",
     "agent",
@@ -2749,6 +2834,7 @@ def run_setup_wizard(args):
       hermes setup model     — just model/provider
       hermes setup tts       — just text-to-speech
       hermes setup terminal  — just terminal backend
+      hermes setup timezone  — just timezone
       hermes setup gateway   — just messaging platforms
       hermes setup tools     — just tool configuration
       hermes setup agent     — just agent settings
