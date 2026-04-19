@@ -349,7 +349,7 @@ Grok 4 family models reason **automatically on the server side** — the `reason
 
 Exceptions:
 - `grok-3-mini` accepts `reasoning_effort` with values `"low"` and `"high"` on Chat Completions.
-- `grok-4.20-multi-agent-0309` accepts `reasoning.effort` on Responses API to control the number of collaborative agents: `"low"` / `"medium"` spawn 4 agents; `"high"` / `"xhigh"` spawn 16 agents.
+- `grok-4.20-multi-agent-0309` accepts `reasoning.effort` on Responses API to control the number of collaborative agents: `"low"` / `"medium"` spawn 4 agents; `"high"` / `"xhigh"` spawn 16 agents. Multi-agent requests are **Responses API only** — Chat Completions returns `"Multi Agent requests are not allowed on chat completions"`. Expect high token overhead (≈37k input / 5k reasoning tokens for a trivial prompt at `xhigh`, i.e. ≈$0.08/call).
 
 Parameters **not supported** by Grok 4 reasoning models: `presence_penalty`, `frequency_penalty`, `stop`, `logprobs`.
 
