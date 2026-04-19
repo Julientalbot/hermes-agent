@@ -289,15 +289,94 @@ Base URLs can be overridden with `GLM_BASE_URL`, `KIMI_BASE_URL`, `MINIMAX_BASE_
 When using the Z.AI / GLM provider, Hermes automatically probes multiple endpoints (global, China, coding variants) to find one that accepts your API key. You don't need to set `GLM_BASE_URL` manually — the working endpoint is detected and cached automatically.
 :::
 
-### xAI (Grok) — Responses API + Prompt Caching
+### xAI (Grok) — Native Provider
 
-xAI is wired through the Responses API (`codex_responses` transport) for automatic reasoning support on Grok 4 models — no `reasoning_effort` parameter needed, the server reasons by default. Set `XAI_API_KEY` in `~/.hermes/.env` and pick xAI in `hermes model`, or drop `grok` as a shortcut into `/model grok-4-1-fast-reasoning`.
+Hermes integrates [xAI](https://x.ai) as a first-class provider with direct access to the Grok model family. Traffic is routed through the xAI **Responses API** (not Chat Completions) to enable encrypted reasoning, prompt caching, and structured tool output.
 
-When using xAI as a provider (any base URL containing `x.ai`), Hermes automatically enables prompt caching by sending the `x-grok-conv-id` header with every API request. This routes requests to the same server within a conversation session, allowing xAI's infrastructure to reuse cached system prompts and conversation history.
+```bash
+# Default setup
+export XAI_API_KEY=xai-...
+hermes chat --provider xai --model grok-4.20-0309-reasoning
 
-No configuration is needed — caching activates automatically when an xAI endpoint is detected and a session ID is available. This reduces latency and cost for multi-turn conversations.
+# Alias forms (all resolve to the same provider)
+hermes chat --provider grok --model grok-4-0709
+hermes chat --provider x-ai --model grok-4-1-fast-reasoning
+```
 
-xAI also ships a dedicated TTS endpoint (`/v1/tts`). Select **xAI TTS** in `hermes tools` → Voice & TTS, or see the [Voice & TTS](../user-guide/features/tts.md#text-to-speech) page for config.
+Or pin it in `config.yaml`:
+
+```yaml
+model:
+  provider: "xai"
+  default: "grok-4.20-0309-reasoning"
+```
+
+Get an API key at [console.x.ai](https://console.x.ai). Pricing and live model metadata are exposed at `GET https://api.x.ai/v1/language-models`.
+
+#### Supported Models
+
+The `hermes model` picker exposes the current Grok lineup (`hermes_cli/models.py`):
+
+| Model ID | Type | Input / Output $/1M | Notes |
+|---|---|---|---|
+| `grok-4.20-0309-reasoning` | reasoning | $2.00 / $6.00 | Flagship — 2M context, agentic-optimized |
+| `grok-4.20-0309-non-reasoning` | chat | $2.00 / $6.00 | Same model without thinking |
+| `grok-4.20-multi-agent-0309` | multi-agent | $2.00 / $6.00 | 4 or 16 collaborative agents (see below) |
+| `grok-4-1-fast-reasoning` | fast reasoning | $0.20 / $0.50 | Vision-capable, low-latency |
+| `grok-4-1-fast-non-reasoning` | fast chat | $0.20 / $0.50 | Default auxiliary model for xAI main provider |
+| `grok-4-fast-reasoning` | fast reasoning | $0.20 / $0.50 | Previous-gen fast reasoning |
+| `grok-4-fast-non-reasoning` | fast chat | $0.20 / $0.50 | |
+| `grok-4-0709` | reasoning | $3.00 / $15.00 | Historic flagship — 256k context, aliases `grok-4` / `grok-4-latest` |
+| `grok-code-fast-1` | coding | $0.20 / $1.50 | Also available via GitHub Copilot |
+| `grok-3` | legacy chat | $3.00 / $15.00 | Text-only |
+| `grok-3-mini` | legacy chat | $0.30 / $0.50 | Text-only, supports `reasoning_effort` low/high |
+
+All Grok 4 / 4.1 / 4.20 variants expose a **2,000,000-token context window**. `grok-4-0709` is capped at **256,000** tokens per [xAI's model card](https://docs.x.ai/docs/models/grok-4-0709). Knowledge cutoff: November 2024 — enable `web_search` / `x_search` tools to access real-time data.
+
+#### Responses API transport
+
+xAI traffic is forced through the `codex_responses` transport (`POST /v1/responses`) regardless of model choice. This is the canonical path for agentic workloads on xAI per their [migration guide](https://docs.x.ai/developers/rest-api-reference/inference/chat) and unlocks:
+
+- Structured output items (`message`, `reasoning`, `function_call`, `web_search_call`, `code_interpreter_call`, …)
+- Server-side tool invocations with fine-grained telemetry via `usage.server_side_tool_usage_details`
+- Stateful continuation via `previous_response_id`
+
+Base URL can be overridden with `XAI_BASE_URL` (useful for mTLS enterprise endpoints at `https://mtls.api.x.ai`).
+
+#### Reasoning handling
+
+Grok 4 family models reason **automatically on the server side** — the `reasoning_effort` parameter is explicitly rejected by the API for `grok-4`, `grok-4-0709`, `grok-4-fast-*`, `grok-4-1-fast-*`, and `grok-4.20-*-reasoning` (see [xAI reasoning docs](https://docs.x.ai/developers/model-capabilities/text/reasoning)). Hermes reflects this by sending only `include=["reasoning.encrypted_content"]` to preserve thinking state across turns, without any `reasoning.effort` parameter.
+
+Exceptions:
+- `grok-3-mini` accepts `reasoning_effort` with values `"low"` and `"high"` on Chat Completions.
+- `grok-4.20-multi-agent-0309` accepts `reasoning.effort` on Responses API to control the number of collaborative agents: `"low"` / `"medium"` spawn 4 agents; `"high"` / `"xhigh"` spawn 16 agents.
+
+Parameters **not supported** by Grok 4 reasoning models: `presence_penalty`, `frequency_penalty`, `stop`, `logprobs`.
+
+#### Prompt caching
+
+When Hermes detects an xAI endpoint (base URL containing `x.ai`) and has an active session ID, it automatically sets the `x-grok-conv-id` header on every request. This routes traffic to the same backend within a conversation, letting xAI's infrastructure reuse cached system prompts and history (~10% of input cost for cache hits, per the [xAI prompt caching docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching)). No configuration required.
+
+#### Vision
+
+All Grok 4 / 4.1 / 4.20 models accept image input (JPG/JPEG/PNG, max 20 MiB per image). Hermes uses `grok-4-1-fast-non-reasoning` as the default auxiliary model for vision analysis when the main provider is xAI — it's vision-capable, fast, and the cheapest Grok-4-class model.
+
+#### Tool-use enforcement
+
+Grok models benefit from Hermes's **tool-use enforcement** guidance (enabled by default for any model whose name contains `grok`). This injects anti-narration / mandatory-tool-call prompts into the system message to prevent "here's what I would do…" non-answers. Override in `config.yaml`:
+
+```yaml
+tool_use_enforcement:
+  enabled_models: ["gpt", "codex", "gemini", "gemma", "grok"]
+```
+
+#### xAI Text-to-Speech
+
+Hermes ships a TTS backend for xAI's `/v1/tts` endpoint with the five official voices (`eve`, `ara`, `leo`, `rex`, `sal`). See the [TTS guide](../user-guide/features/tts.md) for configuration. Pricing: $4.20 / 1M characters.
+
+#### What xAI features are not yet wired
+
+The xAI API exposes several GA capabilities that Hermes does not currently plumb through: server-side tools (`web_search`, `x_search`, `code_execution`, `collections_search`, `attachment_search`, remote MCP), image / video generation (`grok-imagine-*`), realtime voice agent (`wss://api.x.ai/v1/realtime`), deferred completions, batch API (−50% pricing), and speech-to-text. Contributions welcome — see the [xAI API reference](https://docs.x.ai/developers/rest-api-reference) for specs.
 
 ### Ollama Cloud — Managed Ollama Models, OAuth + API Key
 
