@@ -83,7 +83,7 @@ _REVEAL_WINDOW_SECONDS = 30
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|.*\.ngrok-free\.dev|.*\.ts\.net)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -101,6 +101,7 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    "/api/voice/realtime-token",
 })
 
 
