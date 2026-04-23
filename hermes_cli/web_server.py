@@ -2519,6 +2519,26 @@ def _mount_plugin_api_routes():
 # Mount plugin API routes before the SPA catch-all.
 _mount_plugin_api_routes()
 
+# Mount voice routes (Voice Agent + realtime token)
+try:
+    from hermes_cli.voice_routes import router as _voice_router
+    app.include_router(_voice_router, prefix="/api/voice")
+    _log.info("Mounted voice routes: /api/voice/")
+except Exception as _voice_exc:
+    _log.warning("Failed to load voice routes: %s", _voice_exc)
+
+# Serve voice PWA at /voice/ (before SPA catch-all)
+_voice_dir = WEB_DIST / "voice"
+if _voice_dir.is_dir():
+    @app.get("/voice")
+    @app.get("/voice/{_rest:path}")
+    async def _serve_voice(_rest: str = ""):
+        file_path = _voice_dir / _rest if _rest else _voice_dir / "index.html"
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_voice_dir / "index.html")
+    _log.info("Mounted voice PWA: /voice/")
+
 mount_spa(app)
 
 
