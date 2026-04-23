@@ -64,6 +64,8 @@ _HERMES_CORE_TOOLS = [
     "x_search",
     # Web search via xAI Responses API (gated on XAI_API_KEY via check_fn)
     "xai_web_search",
+    # Files API — upload/analyze documents with Grok (gated on XAI_API_KEY)
+    "xai_files",
 ]
 
 
@@ -104,6 +106,12 @@ TOOLSETS = {
     "xai_web_search": {
         "description": "Search the web via xAI's built-in Web Search (Grok server-side)",
         "tools": ["xai_web_search"],
+        "includes": []
+    },
+
+    "xai_files": {
+        "description": "Upload and analyze documents with Grok via xAI Files API",
+        "tools": ["xai_files"],
         "includes": []
     },
 
