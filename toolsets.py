@@ -62,6 +62,8 @@ _HERMES_CORE_TOOLS = [
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
     # X/Twitter search via xAI (gated on XAI_API_KEY via check_fn)
     "x_search",
+    # Web search via xAI Responses API (gated on XAI_API_KEY via check_fn)
+    "xai_web_search",
 ]
 
 
@@ -96,6 +98,12 @@ TOOLSETS = {
     "x_search": {
         "description": "Search X (Twitter) posts and profiles via xAI native search",
         "tools": ["x_search"],
+        "includes": []
+    },
+
+    "xai_web_search": {
+        "description": "Search the web via xAI's built-in Web Search (Grok server-side)",
+        "tools": ["xai_web_search"],
         "includes": []
     },
 
