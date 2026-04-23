@@ -60,6 +60,10 @@ _HERMES_CORE_TOOLS = [
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+    # X/Twitter search via xAI (gated on XAI_API_KEY via check_fn)
+    "x_search",
+    # Video generation via xAI (gated on XAI_API_KEY via check_fn)
+    "video_generate",
 ]
 
 
@@ -90,13 +94,25 @@ TOOLSETS = {
         "tools": ["image_generate"],
         "includes": []
     },
-    
+
+    "x_search": {
+        "description": "Search X (Twitter) posts and profiles via xAI native search",
+        "tools": ["x_search"],
+        "includes": []
+    },
+
+    "video_gen": {
+        "description": "Generate, edit, or extend videos via xAI grok-imagine-video",
+        "tools": ["video_generate"],
+        "includes": []
+    },
+
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
         "includes": []
     },
-    
+
     "moa": {
         "description": "Advanced reasoning and problem-solving tools",
         "tools": ["mixture_of_agents"],
