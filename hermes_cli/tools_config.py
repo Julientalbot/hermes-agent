@@ -58,6 +58,7 @@ CONFIGURABLE_TOOLSETS = [
     ("x_search",        "🐦 X/Twitter Search (xAI)",    "x_search"),
     ("xai_web_search",  "🌐 Web Search (xAI)",          "xai_web_search"),
     ("xai_batches",     "📦 Batches (xAI)",             "xai_batches"),
+    ("xai_tokenize",    "🧮 Tokenize (xAI)",            "xai_tokenize"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
     ("skills",          "📚 Skills",                    "list, view, manage"),

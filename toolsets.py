@@ -68,6 +68,8 @@ _HERMES_CORE_TOOLS = [
     "xai_files",
     # Batch API — asynchronous large-scale xAI jobs (gated on XAI_API_KEY)
     "xai_batches",
+    # Tokenize Text API — exact xAI token counts (gated on XAI_API_KEY)
+    "xai_tokenize",
 ]
 
 
@@ -120,6 +122,12 @@ TOOLSETS = {
     "xai_batches": {
         "description": "Create, monitor, and retrieve xAI Batch API jobs",
         "tools": ["xai_batches"],
+        "includes": []
+    },
+
+    "xai_tokenize": {
+        "description": "Count and inspect exact xAI model tokens",
+        "tools": ["xai_tokenize"],
         "includes": []
     },
 
