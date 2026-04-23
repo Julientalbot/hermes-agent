@@ -60,6 +60,8 @@ _HERMES_CORE_TOOLS = [
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+    # X/Twitter search via xAI (gated on XAI_API_KEY via check_fn)
+    "x_search",
 ]
 
 
@@ -90,7 +92,13 @@ TOOLSETS = {
         "tools": ["image_generate"],
         "includes": []
     },
-    
+
+    "x_search": {
+        "description": "Search X (Twitter) posts and profiles via xAI native search",
+        "tools": ["x_search"],
+        "includes": []
+    },
+
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
