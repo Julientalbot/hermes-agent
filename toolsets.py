@@ -66,6 +66,8 @@ _HERMES_CORE_TOOLS = [
     "xai_web_search",
     # Files API — upload/analyze documents with Grok (gated on XAI_API_KEY)
     "xai_files",
+    # Batch API — asynchronous large-scale xAI jobs (gated on XAI_API_KEY)
+    "xai_batches",
 ]
 
 
@@ -112,6 +114,12 @@ TOOLSETS = {
     "xai_files": {
         "description": "Upload and analyze documents with Grok via xAI Files API",
         "tools": ["xai_files"],
+        "includes": []
+    },
+
+    "xai_batches": {
+        "description": "Create, monitor, and retrieve xAI Batch API jobs",
+        "tools": ["xai_batches"],
         "includes": []
     },
 

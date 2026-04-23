@@ -57,6 +57,7 @@ CONFIGURABLE_TOOLSETS = [
     ("image_gen",       "🎨 Image Generation",          "image_generate"),
     ("x_search",        "🐦 X/Twitter Search (xAI)",    "x_search"),
     ("xai_web_search",  "🌐 Web Search (xAI)",          "xai_web_search"),
+    ("xai_batches",     "📦 Batches (xAI)",             "xai_batches"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
     ("skills",          "📚 Skills",                    "list, view, manage"),
