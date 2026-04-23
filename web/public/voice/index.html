@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Hermes — Voice</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%; width: 100%;
+    background: #0a0a0a; color: #e8e4df;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+
+  /* Status bar */
+  #status {
+    font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase;
+    opacity: 0.4; min-height: 18px; margin-bottom: 24px;
+    transition: opacity 0.3s, color 0.3s;
+  }
+  #status.active { opacity: 1; color: #fff; }
+  #status.error { color: #ff4d4d; opacity: 1; }
+
+  /* Voice selector */
+  #voice-bar {
+    position: fixed; top: 20px; right: 20px;
+    display: flex; gap: 6px; z-index: 10;
+  }
+  .voice-btn {
+    width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.15);
+    background: transparent; color: #888; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .voice-btn.active { border-color: #40c0ff; color: #40c0ff; background: rgba(64,192,255,0.1); }
+
+  /* Main button */
+  #btn {
+    width: 160px; height: 160px; border-radius: 50%; border: none;
+    background: radial-gradient(circle at 35% 35%, #2a2a2a, #111);
+    box-shadow: 0 4px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+    cursor: pointer; transition: transform 0.15s cubic-bezier(.4,0,.2,1), box-shadow 0.3s;
+    touch-action: manipulation;
+    position: relative; outline: none;
+  }
+  #btn:active { transform: scale(0.93); }
+
+  /* Pulse ring */
+  #ring {
+    position: absolute; inset: -12px; border-radius: 50%;
+    border: 2px solid transparent; opacity: 0;
+    transition: opacity 0.4s, border-color 0.4s;
+    pointer-events: none;
+  }
+  #btn.listening { background: radial-gradient(circle at 35% 35%, #ff4d4d, #aa0000); box-shadow: 0 0 40px rgba(255,77,77,0.3); }
+  #btn.listening #ring { opacity: 1; border-color: rgba(255,77,77,0.3); animation: pulse 1.6s ease-in-out infinite; }
+  #btn.speaking { background: radial-gradient(circle at 35% 35%, #40c0ff, #005599); box-shadow: 0 0 40px rgba(64,192,255,0.3); }
+  #btn.speaking #ring { opacity: 1; border-color: rgba(64,192,255,0.3); animation: pulse 1.2s ease-in-out infinite; }
+
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+
+  /* Mic icon */
+  #mic { width: 52px; height: 52px; fill: none; stroke: #e8e4df; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #btn.listening #mic { stroke: #fff; }
+  #btn.speaking #mic { stroke: #fff; }
+
+  /* Transcript */
+  #transcript {
+    position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    max-width: 340px; width: 90%; text-align: center;
+    font-size: 14px; line-height: 1.6; opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+  #transcript.show { opacity: 0.7; }
+  #transcript .user { color: #ff8888; margin-bottom: 4px; }
+  #transcript .assistant { color: #88ccff; }
+
+  /* Overlay */
+  #overlay {
+    position: fixed; inset: 0; z-index: 100; background: #0a0a0a;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
+  }
+  #overlay h1 { font-size: 22px; font-weight: 500; letter-spacing: 0.05em; }
+  #overlay p { font-size: 13px; opacity: 0.4; max-width: 260px; text-align: center; line-height: 1.5; }
+  #startBtn {
+    padding: 14px 40px; border-radius: 12px; border: none;
+    background: #e0dcd7; color: #0a0a0a;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>Hermes Voice</h1>
+  <p>Conversation vocale temps réel avec Grok. Appuyez pour parler, relâchez pour écouter.</p>
+  <button id="startBtn">Démarrer</button>
+</div>
+
+<div id="app" class="hidden" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;">
+
+  <div id="voice-bar">
+    <button class="voice-btn active" data-voice="eve" title="Eve — féminine, énergique">E</button>
+    <button class="voice-btn" data-voice="ara" title="Ara — féminine, chaleureuse">A</button>
+    <button class="voice-btn" data-voice="rex" title="Rex — masculin, confiant">R</button>
+    <button class="voice-btn" data-voice="sal" title="Sal — neutre, polyvalent">S</button>
+    <button class="voice-btn" data-voice="leo" title="Léo — masculin, autoritaire">L</button>
+  </div>
+
+  <div id="status">Connexion...</div>
+
+  <button id="btn" disabled>
+    <div id="ring"></div>
+    <svg id="mic" viewBox="0 0 24 24">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+      <line x1="12" y1="19" x2="12" y2="23"/>
+      <line x1="8" y1="23" x2="16" y2="23"/>
+    </svg>
+  </button>
+
+  <div id="transcript">
+    <div class="user"></div>
+    <div class="assistant"></div>
+  </div>
+</div>
+
+<script>
+// ==========================================================================
+// Hermes Voice — Real-time conversation via xAI Voice Agent
+// ==========================================================================
+
+const TOKEN_URL = '/api/voice/realtime-token';
+const REALTIME_URL = 'wss://api.x.ai/v1/realtime';
+
+const $ = id => document.getElementById(id);
+let ws = null;
+let audioCtx = null;
+let mediaStream = null;
+let workletNode = null;
+let selectedVoice = 'eve';
+let state = 'idle'; // idle | listening | speaking
+let isConnected = false;
+
+// Audio playback queue
+let playbackCtx = null;
+let playbackQueue = [];
+let isPlaying = false;
+
+// ==========================================================================
+// State management
+// ==========================================================================
+
+function setState(s, text) {
+  state = s;
+  $('status').textContent = text || s;
+  $('status').className = s === 'idle' ? '' : 'active';
+  $('btn').className = s === 'idle' ? '' : s;
+  $('btn').disabled = !isConnected;
+}
+
+// ==========================================================================
+// Voice selector
+// ==========================================================================
+
+document.querySelectorAll('.voice-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedVoice = btn.dataset.voice;
+    // Reconnect with new voice if already connected
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'session.update',
+        session: { voice: selectedVoice }
+      }));
+    }
+  });
+});
+
+// ==========================================================================
+// WebSocket connection
+// ==========================================================================
+
+async function getToken() {
+  const resp = await fetch(TOKEN_URL, { method: 'POST' });
+  if (!resp.ok) throw new Error('Token error: ' + resp.status);
+  const data = await resp.json();
+  return data.client_secret;
+}
+
+async function connect() {
+  setState('idle', 'Connexion...');
+  try {
+    const token = await getToken();
+    ws = new WebSocket(REALTIME_URL);
+    ws.onopen = () => {
+      // Send auth via protocol header isn't possible in browser WebSocket,
+      // so we send session.update with auth
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleEvent(data);
+    };
+
+    ws.onerror = (e) => {
+      console.error('WebSocket error', e);
+      setState('idle', 'Erreur de connexion');
+    };
+
+    ws.onclose = () => {
+      isConnected = false;
+      setState('idle', 'Déconnecté');
+      // Auto-reconnect after 3s
+      setTimeout(() => { if (!isConnected) connect(); }, 3000);
+    };
+
+    // Wait for connection, then configure
+    await new Promise((resolve) => {
+      const orig = ws.onmessage;
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'session.created' || data.type === 'conversation.created') {
+          // Configure session
+          ws.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              voice: selectedVoice,
+              turn_detection: { type: 'server_vad' },
+              input_audio_transcription: { model: 'grok-stt' },
+            }
+          }));
+        }
+        if (data.type === 'session.updated') {
+          isConnected = true;
+          setState('idle', 'Prêt');
+          $('btn').disabled = false;
+          ws.onmessage = orig;
+          resolve();
+          return;
+        }
+        // Still handle other events
+        orig(event);
+      };
+    });
+
+    // Re-attach main handler
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleEvent(data);
+    };
+
+  } catch (e) {
+    console.error('Connection failed', e);
+    setState('idle', 'Erreur : ' + e.message);
+  }
+}
+
+// ==========================================================================
+// Event handling
+// ==========================================================================
+
+function handleEvent(data) {
+  const t = data.type;
+
+  if (t === 'input_audio_buffer.speech_started') {
+    setState('listening', 'Écoute...');
+  }
+
+  else if (t === 'input_audio_buffer.speech_stopped') {
+    setState('idle', 'Traitement...');
+  }
+
+  else if (t === 'conversation.item.input_audio_transcription.completed') {
+    const transcript = data.transcript || '';
+    if (transcript) {
+      $('transcript').querySelector('.user').textContent = '« ' + transcript + ' »';
+      $('transcript').classList.add('show');
+    }
+  }
+
+  else if (t === 'response.created') {
+    setState('speaking', 'Grok parle...');
+    playbackQueue = [];
+    isPlaying = true;
+  }
+
+  else if (t === 'response.audio.delta') {
+    // Stream audio chunk to playback
+    const b64 = data.delta;
+    if (b64) queueAudioChunk(b64);
+  }
+
+  else if (t === 'response.audio_transcript.delta') {
+    // Update assistant transcript in real-time
+    const el = $('transcript').querySelector('.assistant');
+    el.textContent += data.delta || '';
+  }
+
+  else if (t === 'response.audio_transcript.done') {
+    // Transcript complete
+  }
+
+  else if (t === 'response.audio.done') {
+    // Audio complete — wait for playback to finish
+  }
+
+  else if (t === 'response.done') {
+    isPlaying = false;
+    // Wait for last chunks to play, then go idle
+    setTimeout(() => {
+      if (state === 'speaking') {
+        setState('idle', 'Prêt');
+        setTimeout(() => {
+          $('transcript').classList.remove('show');
+          $('transcript').querySelector('.user').textContent = '';
+          $('transcript').querySelector('.assistant').textContent = '';
+        }, 3000);
+      }
+    }, 500);
+  }
+
+  else if (t === 'error') {
+    console.error('xAI error', data);
+    setState('idle', 'Erreur');
+  }
+}
+
+// ==========================================================================
+// Audio playback (streaming PCM16)
+// ==========================================================================
+
+function getPlaybackCtx() {
+  if (!playbackCtx) {
+    playbackCtx = new AudioContext({ sampleRate: 24000 });
+  }
+  return playbackCtx;
+}
+
+function queueAudioChunk(b64) {
+  try {
+    const ctx = getPlaybackCtx();
+    const raw = atob(b64);
+    const samples = new Float32Array(raw.length / 2);
+    const view = new DataView(new ArrayBuffer(raw.length));
+    for (let i = 0; i < raw.length; i++) {
+      view.setUint8(i, raw.charCodeAt(i));
+    }
+    for (let i = 0; i < samples.length; i++) {
+      samples[i] = view.getInt16(i * 2, true) / 32768.0;
+    }
+
+    const buffer = ctx.createBuffer(1, samples.length, 24000);
+    buffer.getChannelData(0).set(samples);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+
+    // Schedule to play after current queue
+    const lastTime = playbackQueue.length > 0
+      ? playbackQueue[playbackQueue.length - 1].endTime
+      : ctx.currentTime;
+    source.start(lastTime);
+
+    playbackQueue.push({
+      source,
+      endTime: lastTime + buffer.duration
+    });
+
+    // Clean up old entries
+    if (playbackQueue.length > 100) {
+      playbackQueue = playbackQueue.slice(-50);
+    }
+  } catch (e) {
+    console.warn('Audio chunk error', e);
+  }
+}
+
+// ==========================================================================
+// Audio capture (AudioWorklet → PCM16)
+// ==========================================================================
+
+const workletCode = `
+class HermesCapture extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    if (input && input[0]) {
+      const float32 = input[0];
+      const pcm16 = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('hermes-capture', HermesCapture);
+`;
+
+async function startCapture() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 24000,
+    }
+  });
+
+  audioCtx = new AudioContext({ sampleRate: 24000 });
+
+  // Inject worklet
+  const blob = new Blob([workletCode], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  await audioCtx.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
+
+  const source = audioCtx.createMediaStreamSource(mediaStream);
+  workletNode = new AudioWorkletNode(audioCtx, 'hermes-capture');
+
+  workletNode.port.onmessage = (e) => {
+    if (ws && ws.readyState === WebSocket.OPEN && state === 'listening') {
+      const pcm16 = e.data;
+      const bytes = new Uint8Array(pcm16);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const b64 = btoa(binary);
+      ws.send(JSON.stringify({
+        type: 'input_audio_buffer.append',
+        audio: b64,
+      }));
+    }
+  };
+
+  source.connect(workletNode);
+  workletNode.connect(audioCtx.destination); // Required for worklet to run
+}
+
+function stopCapture() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  if (audioCtx) {
+    audioCtx.close();
+    audioCtx = null;
+  }
+}
+
+// ==========================================================================
+// Button interaction
+// ==========================================================================
+
+let pressing = false;
+
+function onPress() {
+  if (!isConnected) return;
+  pressing = true;
+
+  // Clear previous transcript
+  $('transcript').querySelector('.assistant').textContent = '';
+
+  // Start capturing and streaming
+  startCapture().then(() => {
+    setState('listening', 'Écoute...');
+  }).catch(e => {
+    console.error('Capture error', e);
+    setState('idle', 'Erreur micro');
+  });
+}
+
+function onRelease() {
+  if (!pressing) return;
+  pressing = false;
+
+  // Stop capture
+  stopCapture();
+
+  // Commit audio and request response
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    ws.send(JSON.stringify({ type: 'response.create' }));
+    setState('idle', 'Réflexion...');
+  }
+}
+
+// Mouse events
+$('btn').addEventListener('pointerdown', (e) => { e.preventDefault(); onPress(); });
+$('btn').addEventListener('pointerup', (e) => { e.preventDefault(); onRelease(); });
+$('btn').addEventListener('pointerleave', () => { if (pressing) onRelease(); });
+
+// Prevent context menu on long press
+$('btn').addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ==========================================================================
+// Start
+// ==========================================================================
+
+$('startBtn').addEventListener('click', async () => {
+  // Request mic permission first
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(t => t.stop()); // Release immediately
+    $('overlay').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    connect();
+  } catch (e) {
+    alert('Microphone non disponible : ' + e.message);
+  }
+});
+
+// Service worker
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>

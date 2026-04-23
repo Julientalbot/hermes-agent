@@ -315,3 +315,41 @@ async def voice_grok(
                     Path(p).unlink()
             except Exception:
                 pass
+
+
+# ==========================================================================
+# Realtime token endpoint — ephemeral token for browser-side WebSocket
+# ==========================================================================
+
+@router.post("/realtime-token")
+async def realtime_token():
+    """
+    Create an ephemeral token for browser-side Voice Agent connections.
+    The browser uses this token to connect directly to wss://api.x.ai/v1/realtime
+    without exposing the main API key.
+    """
+    api_key = os.getenv("XAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="XAI_API_KEY not configured")
+
+    import requests as req
+
+    try:
+        resp = req.post(
+            "https://api.x.ai/v1/realtime/client_secrets",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return JSONResponse({
+            "client_secret": data.get("value", ""),
+            "expires_at": data.get("expires_at", 0),
+        })
+    except Exception as exc:
+        _log.error("[voice/realtime-token] Failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Failed to create token: {exc}")
