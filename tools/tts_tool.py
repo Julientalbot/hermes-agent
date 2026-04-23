@@ -108,6 +108,17 @@ DEFAULT_XAI_LANGUAGE = "en"
 DEFAULT_XAI_SAMPLE_RATE = 24000
 DEFAULT_XAI_BIT_RATE = 128000
 DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
+XAI_INLINE_SPEECH_TAGS = (
+    "[pause]", "[long-pause]", "[hum-tune]",
+    "[laugh]", "[chuckle]", "[giggle]", "[cry]",
+    "[tsk]", "[tongue-click]", "[lip-smack]",
+    "[breath]", "[inhale]", "[exhale]", "[sigh]",
+)
+XAI_WRAPPING_SPEECH_TAGS = (
+    "soft", "whisper", "loud", "build-intensity", "decrease-intensity",
+    "higher-pitch", "lower-pitch", "slow", "fast",
+    "sing-song", "singing", "laugh-speak", "emphasis",
+)
 DEFAULT_GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_GEMINI_TTS_VOICE = "Kore"
 DEFAULT_GEMINI_TTS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -402,7 +413,9 @@ def _generate_xai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -
     Generate audio using xAI TTS.
 
     xAI exposes a dedicated /v1/tts endpoint instead of the OpenAI audio.speech
-    API shape, so this is implemented as a separate backend.
+    API shape, so this is implemented as a separate backend. Speech tags such
+    as [pause], [laugh], and <whisper>...</whisper> are provider-native and
+    must be passed through unchanged in the text payload.
     """
     import requests
 
@@ -1484,6 +1497,14 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 from tools.registry import registry, tool_error
 
+_XAI_SPEECH_TAG_DESCRIPTION = (
+    "When the configured provider is xAI, the text may include xAI speech tags "
+    "and they will be sent unchanged: inline tags "
+    f"{', '.join(XAI_INLINE_SPEECH_TAGS)}; wrapping tags "
+    f"{', '.join(f'<{tag}>...</{tag}>' for tag in XAI_WRAPPING_SPEECH_TAGS)}."
+)
+
+
 TTS_SCHEMA = {
     "name": "text_to_speech",
     "description": "Convert text to speech audio. Returns a MEDIA: path that the platform delivers as a voice message. On Telegram it plays as a voice bubble, on Discord/WhatsApp as an audio attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured, not model-selected.",
@@ -1492,7 +1513,7 @@ TTS_SCHEMA = {
         "properties": {
             "text": {
                 "type": "string",
-                "description": "The text to convert to speech. Provider-specific character caps apply and are enforced automatically (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k depending on model); over-long input is truncated."
+                "description": "The text to convert to speech. Provider-specific character caps apply and are enforced automatically (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k depending on model); over-long input is truncated. " + _XAI_SPEECH_TAG_DESCRIPTION
             },
             "output_path": {
                 "type": "string",
