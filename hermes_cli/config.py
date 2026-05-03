@@ -388,6 +388,12 @@ DEFAULT_CONFIG = {
     "providers": {},
     "fallback_providers": [],
     "credential_pool_strategies": {},
+    "openrouter": {
+        "response_cache": {
+            "enabled": False,
+            "ttl_seconds": None,
+        },
+    },
     "toolsets": ["hermes-cli"],
     "agent": {
         "max_turns": 90,

@@ -33,6 +33,7 @@ def _clean_env(monkeypatch):
         "OPENROUTER_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY",
         "OPENAI_MODEL", "LLM_MODEL", "NOUS_INFERENCE_BASE_URL",
         "ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+        "HERMES_OPENROUTER_RESPONSE_CACHE", "HERMES_OPENROUTER_RESPONSE_CACHE_TTL",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -65,6 +66,17 @@ class TestNormalizeAuxProvider:
     def test_maps_github_copilot_acp_aliases(self):
         assert _normalize_aux_provider("github-copilot-acp") == "copilot-acp"
         assert _normalize_aux_provider("copilot-acp-agent") == "copilot-acp"
+
+
+def test_openrouter_auxiliary_client_uses_configurable_headers(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    expected_headers = {"X-Test-OpenRouter": "cache-enabled"}
+
+    with patch("agent.auxiliary_client.openrouter_default_headers", return_value=expected_headers), \
+         patch("agent.auxiliary_client.OpenAI") as mock_openai:
+        resolve_provider_client("openrouter")
+
+    assert mock_openai.call_args.kwargs["default_headers"] == expected_headers
 
 
 class TestReadCodexAccessToken:

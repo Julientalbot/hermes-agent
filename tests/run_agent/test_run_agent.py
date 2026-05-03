@@ -151,6 +151,25 @@ def test_aiagent_reuses_existing_errors_log_handler():
             root_logger.addHandler(handler)
 
 
+def test_aiagent_openrouter_uses_configurable_headers():
+    expected_headers = {"X-Test-OpenRouter": "cache-enabled"}
+    with (
+        patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+        patch("run_agent.check_toolset_requirements", return_value={}),
+        patch("run_agent.openrouter_default_headers", return_value=expected_headers),
+        patch("run_agent.OpenAI") as mock_openai,
+    ):
+        AIAgent(
+            api_key="test-key-1234567890",
+            base_url="https://openrouter.ai/api/v1",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+        )
+
+    assert mock_openai.call_args.kwargs["default_headers"] == expected_headers
+
+
 class TestProviderModelNormalization:
     def test_aiagent_strips_matching_native_provider_prefix(self):
         with (
