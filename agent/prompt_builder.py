@@ -819,6 +819,87 @@ def build_nous_subscription_prompt(valid_tool_names: "set[str] | None" = None) -
     return "\n".join(lines)
 
 
+_XAI_NATIVE_TOOL_NAMES = {
+    "xai_web_search",
+    "x_search",
+    "xai_code_execution",
+    "xai_responses_chat",
+    "xai_deferred_chat",
+    "xai_batch_chat",
+}
+
+
+def build_xai_tool_routing_prompt(valid_tool_names: "set[str] | None" = None) -> str:
+    """Build guidance for choosing xAI-native tools when they are available."""
+    valid_names = set(valid_tool_names or set())
+    if not (valid_names & _XAI_NATIVE_TOOL_NAMES):
+        return ""
+
+    lines = [
+        "# xAI-native tool routing",
+        (
+            "When these tools are available, use them for tasks that match their "
+            "native surface. Do not use xAI-specific tools for local host, local "
+            "repository, or local file work."
+        ),
+    ]
+
+    if "xai_web_search" in valid_names:
+        lines.append(
+            "- Current web facts that need grounding or citations: prefer "
+            "`xai_web_search`; fall back to `web_search` or `web_extract` if "
+            "xAI search is unavailable or insufficient."
+        )
+    if "x_search" in valid_names:
+        lines.append(
+            "- X/Twitter posts, threads, reactions, trends, or handle-scoped "
+            "questions: use `x_search` instead of general web search."
+        )
+    if "xai_code_execution" in valid_names:
+        lines.append(
+            "- Isolated server-side Python computation: use `xai_code_execution`. "
+            "Use local `execute_code` or `terminal` when the task depends on local "
+            "files, installed packages, git state, or the user's machine."
+        )
+    if "xai_deferred_chat" in valid_names:
+        lines.append(
+            "- Long xAI calls that may exceed normal request timeouts: use "
+            "`xai_deferred_chat`."
+        )
+    if "xai_batch_chat" in valid_names:
+        lines.append(
+            "- Many independent xAI prompts or offline evaluation batches: use "
+            "`xai_batch_chat`."
+        )
+    if "xai_responses_chat" in valid_names:
+        lines.append(
+            "- Stateful xAI Responses workflows that benefit from server-side "
+            "conversation state: use `xai_responses_chat` with store/previous "
+            "response chaining when appropriate."
+        )
+
+    media_tools = []
+    if "image_generate" in valid_names:
+        media_tools.append("images via `image_generate`")
+    if "video_generate" in valid_names:
+        media_tools.append("videos via `video_generate`")
+    if "text_to_speech" in valid_names:
+        media_tools.append("speech via `text_to_speech`")
+    if media_tools:
+        lines.append(
+            "- Media generation uses Hermes' configured providers: request "
+            + ", ".join(media_tools)
+            + ". Do not hardcode xAI model names in tool arguments."
+        )
+
+    lines.append(
+        "- Local files, repo inspection, git state, OS/process/network checks, "
+        "and commands on the user's machine still use local tools such as "
+        "`read_file`, `search_files`, `terminal`, or `execute_code`."
+    )
+    return "\n".join(lines)
+
+
 # =========================================================================
 # Context files (SOUL.md, AGENTS.md, .cursorrules)
 # =========================================================================

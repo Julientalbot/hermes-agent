@@ -18,6 +18,7 @@ from agent.prompt_builder import (
     _strip_yaml_frontmatter,
     build_skills_system_prompt,
     build_nous_subscription_prompt,
+    build_xai_tool_routing_prompt,
     build_context_files_prompt,
     CONTEXT_FILE_MAX_CHARS,
     DEFAULT_AGENT_IDENTITY,
@@ -464,6 +465,62 @@ class TestBuildNousSubscriptionPrompt:
         prompt = build_nous_subscription_prompt({"web_search"})
 
         assert prompt == ""
+
+
+class TestBuildXaiToolRoutingPrompt:
+    def test_returns_empty_without_xai_native_tools(self):
+        assert build_xai_tool_routing_prompt(None) == ""
+        assert build_xai_tool_routing_prompt(set()) == ""
+        assert build_xai_tool_routing_prompt({"web_search", "terminal"}) == ""
+
+    def test_web_search_guidance_only_when_available(self):
+        prompt = build_xai_tool_routing_prompt({"xai_web_search"})
+
+        assert "xAI-native tool routing" in prompt
+        assert "`xai_web_search`" in prompt
+        assert "Current web facts" in prompt
+        assert "`x_search`" not in prompt
+
+    def test_x_search_guidance_only_when_available(self):
+        prompt = build_xai_tool_routing_prompt({"x_search"})
+
+        assert "`x_search`" in prompt
+        assert "X/Twitter posts" in prompt
+        assert "`xai_web_search`" not in prompt
+
+    def test_code_execution_preserves_local_tool_boundary(self):
+        prompt = build_xai_tool_routing_prompt({"xai_code_execution"})
+
+        assert "`xai_code_execution`" in prompt
+        assert "server-side Python" in prompt
+        assert "local files" in prompt
+        assert "`execute_code`" in prompt
+        assert "`terminal`" in prompt
+
+    def test_deferred_batch_and_responses_guidance_is_conditional(self):
+        prompt = build_xai_tool_routing_prompt({
+            "xai_deferred_chat",
+            "xai_batch_chat",
+            "xai_responses_chat",
+        })
+
+        assert "`xai_deferred_chat`" in prompt
+        assert "`xai_batch_chat`" in prompt
+        assert "`xai_responses_chat`" in prompt
+
+    def test_media_tools_are_config_driven_when_xai_prompt_is_active(self):
+        prompt = build_xai_tool_routing_prompt({
+            "xai_web_search",
+            "image_generate",
+            "video_generate",
+            "text_to_speech",
+        })
+
+        assert "configured providers" in prompt
+        assert "images via `image_generate`" in prompt
+        assert "videos via `video_generate`" in prompt
+        assert "speech via `text_to_speech`" in prompt
+        assert "Do not hardcode xAI model names" in prompt
 
 
 # =========================================================================

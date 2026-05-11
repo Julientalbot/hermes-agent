@@ -619,6 +619,24 @@ class TestBuildSystemPrompt:
         prompt = agent._build_system_prompt()
         assert "NOUS SUBSCRIPTION BLOCK" in prompt
 
+    def test_includes_xai_tool_routing_prompt(self, agent, monkeypatch):
+        monkeypatch.setattr(
+            run_agent,
+            "build_xai_tool_routing_prompt",
+            lambda tool_names: "XAI ROUTING BLOCK",
+        )
+        prompt = agent._build_system_prompt()
+        assert "XAI ROUTING BLOCK" in prompt
+
+    def test_skips_empty_xai_tool_routing_prompt(self, agent, monkeypatch):
+        monkeypatch.setattr(
+            run_agent,
+            "build_xai_tool_routing_prompt",
+            lambda tool_names: "",
+        )
+        prompt = agent._build_system_prompt()
+        assert "XAI ROUTING BLOCK" not in prompt
+
     def test_skills_prompt_derives_available_toolsets_from_loaded_tools(self):
         tools = _make_tool_defs("web_search", "skills_list", "skill_view", "skill_manage")
         toolset_map = {

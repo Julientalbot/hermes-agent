@@ -82,6 +82,7 @@ from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS,
     MEMORY_GUIDANCE, SESSION_SEARCH_GUIDANCE, SKILLS_GUIDANCE,
     build_nous_subscription_prompt,
+    build_xai_tool_routing_prompt,
 )
 from agent.model_metadata import (
     fetch_model_metadata,
@@ -2721,6 +2722,11 @@ class AIAgent:
         nous_subscription_prompt = build_nous_subscription_prompt(self.valid_tool_names)
         if nous_subscription_prompt:
             prompt_parts.append(nous_subscription_prompt)
+
+        xai_tool_routing_prompt = build_xai_tool_routing_prompt(self.valid_tool_names)
+        if xai_tool_routing_prompt:
+            prompt_parts.append(xai_tool_routing_prompt)
+
         # Tool-use enforcement: tells the model to actually call tools instead
         # of describing intended actions.  Controlled by config.yaml
         # agent.tool_use_enforcement:
