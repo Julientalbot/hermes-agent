@@ -99,6 +99,17 @@ TOOLSETS = {
         "tools": ["x_search"],
         "includes": []
     },
+
+    "xai_code_execution": {
+        "description": (
+            "Run calculations and data analysis through xAI's hosted "
+            "code_interpreter Responses tool. This is separate from local "
+            "Hermes execute_code; code runs in xAI's server-side sandbox. "
+            "Off by default; enable in `hermes tools` → xAI Code Execution."
+        ),
+        "tools": ["xai_code_execution"],
+        "includes": []
+    },
     
     "vision": {
         "description": "Image analysis and vision tools",

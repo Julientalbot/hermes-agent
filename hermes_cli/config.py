@@ -1640,8 +1640,24 @@ DEFAULT_CONFIG = {
         "retries": 2,
     },
 
+    # xAI hosted code execution via the Responses API code_interpreter tool.
+    # This is separate from local Hermes code_execution; code runs in xAI's
+    # server-side sandbox. Requires xAI credentials and the xai_code_execution
+    # toolset to be enabled in `hermes tools`.
+    "xai_code_execution": {
+        # xAI reasoning model used for the Responses call. The official xAI
+        # code execution examples use grok-4.3.
+        "model": "grok-4.3",
+        # Request timeout in seconds (minimum 30). Code execution can take
+        # longer than plain chat for data analysis and plotting tasks.
+        "timeout_seconds": 180,
+        # Number of automatic retries on 5xx / Timeout / ConnectionError.
+        # Each retry backs off (1.5x attempt seconds, capped at 5s).
+        "retries": 2,
+    },
+
     # Config schema version - bump this when adding new required fields
-    "_config_version": 23,
+    "_config_version": 24,
 }
 
 # =============================================================================
