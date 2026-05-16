@@ -89,6 +89,16 @@ def test_configurable_toolsets_include_xai_code_execution_default_off():
     assert "xai_code_execution" in _DEFAULT_OFF_TOOLSETS
     assert "xai_code_execution" in TOOL_CATEGORIES
 
+
+def test_configurable_toolsets_include_xai_collections_search_default_off():
+    assert any(
+        ts_key == "xai_collections_search"
+        for ts_key, _, _ in CONFIGURABLE_TOOLSETS
+    )
+    assert "xai_collections_search" in _DEFAULT_OFF_TOOLSETS
+    assert "xai_collections_search" in TOOL_CATEGORIES
+
+
 def test_get_platform_tools_default_telegram_includes_messaging():
     enabled = _get_platform_tools({}, "telegram")
 

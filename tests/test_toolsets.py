@@ -37,6 +37,11 @@ class TestGetToolset:
         assert ts is not None
         assert ts["tools"] == ["xai_code_execution"]
 
+    def test_xai_collections_search_toolset(self):
+        ts = get_toolset("xai_collections_search")
+        assert ts is not None
+        assert ts["tools"] == ["xai_collections_search"]
+
     def test_merges_registry_tools_into_builtin_toolset(self, monkeypatch):
         reg = ToolRegistry()
         reg.register(
