@@ -1134,6 +1134,9 @@ When enabled, three layers of guidance may be added to the system prompt:
 
 3. **Google operational guidance** (Gemini and Gemma models only) — conciseness, absolute paths, parallel tool calls, and verify-before-edit patterns.
 
+4. **xAI/Grok operational guidance** (Grok/xAI models only) — Claim-Action-Evidence discipline for Hermes runtimes: verify post-state before final claims,
+   recover from tool errors by changing strategy, inspect runtime capabilities when tools are available, and route actions to the correct environment or domain.
+
 These are transparent to the user and only affect the system prompt. Models that already use tools reliably (like Claude) don't need this guidance, which is why `"auto"` excludes them.
 
 ### When to turn it on

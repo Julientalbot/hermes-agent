@@ -1068,6 +1068,24 @@ class TestToolUseEnforcementConfig:
         prompt = agent._build_system_prompt()
         assert TOOL_USE_ENFORCEMENT_GUIDANCE in prompt
 
+    def test_auto_injects_xai_guidance_for_grok(self):
+        from agent.prompt_builder import (
+            TOOL_USE_ENFORCEMENT_GUIDANCE,
+            XAI_MODEL_OPERATIONAL_GUIDANCE,
+        )
+
+        agent = self._make_agent(model="x-ai/grok-4.3", tool_use_enforcement="auto")
+        prompt = agent._build_system_prompt()
+        assert TOOL_USE_ENFORCEMENT_GUIDANCE in prompt
+        assert XAI_MODEL_OPERATIONAL_GUIDANCE in prompt
+
+    def test_false_disables_xai_guidance_for_grok(self):
+        from agent.prompt_builder import XAI_MODEL_OPERATIONAL_GUIDANCE
+
+        agent = self._make_agent(model="x-ai/grok-4.3", tool_use_enforcement=False)
+        prompt = agent._build_system_prompt()
+        assert XAI_MODEL_OPERATIONAL_GUIDANCE not in prompt
+
     def test_auto_skips_for_claude(self):
         from agent.prompt_builder import TOOL_USE_ENFORCEMENT_GUIDANCE
         agent = self._make_agent(model="anthropic/claude-sonnet-4", tool_use_enforcement="auto")
