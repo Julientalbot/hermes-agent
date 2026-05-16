@@ -62,6 +62,7 @@ CONFIGURABLE_TOOLSETS = [
     ("image_gen",       "🎨 Image Generation",          "image_generate"),
     ("video_gen",       "🎬 Video Generation",          "video_generate (text-to-video + image-to-video)"),
     ("x_search",        "🐦 X (Twitter) Search",        "x_search (requires xAI OAuth or XAI_API_KEY)"),
+    ("xai_web_search",  "🌐 xAI Web Search",            "xai_web_search (requires xAI OAuth or XAI_API_KEY)"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
     ("skills",          "📚 Skills",                    "list, view, manage"),
@@ -92,7 +93,7 @@ CONFIGURABLE_TOOLSETS = [
 # or XAI_API_KEY). Users opt in via `hermes tools` → X (Twitter) Search,
 # which walks them through credential setup. The tool's check_fn means
 # the schema won't appear to the model even if enabled without credentials.
-_DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant", "spotify", "discord", "discord_admin", "video", "video_gen", "x_search"}
+_DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant", "spotify", "discord", "discord_admin", "video", "video_gen", "x_search", "xai_web_search"}
 
 # Platform-scoped toolsets: only appear in the `hermes tools` checklist for
 # these platforms, and only resolve/save for these platforms.  A toolset
@@ -325,6 +326,39 @@ TOOL_CATEGORIES = {
             "(uses your subscription quota instead of API spend)."
         ),
         "icon": "🐦",
+        "providers": [
+            {
+                "name": "xAI Grok OAuth (SuperGrok Subscription)",
+                "badge": "subscription",
+                "tag": "Browser login at accounts.x.ai — no API key required",
+                "env_vars": [],
+                "post_setup": "xai_grok",
+            },
+            {
+                "name": "xAI API key",
+                "badge": "paid",
+                "tag": "Direct xAI API billing via XAI_API_KEY",
+                "env_vars": [
+                    {
+                        "key": "XAI_API_KEY",
+                        "prompt": "xAI API key",
+                        "url": "https://console.x.ai/",
+                    },
+                ],
+            },
+        ],
+    },
+    "xai_web_search": {
+        "name": "xAI Web Search",
+        "setup_title": "Select xAI Credential Source",
+        "setup_note": (
+            "Hermes routes xAI web searches through xAI's built-in "
+            "web_search Responses tool. Both credential sources hit the "
+            "same https://api.x.ai/v1/responses endpoint — pick whichever "
+            "you already have. SuperGrok OAuth is preferred when both are "
+            "set (uses your subscription quota instead of API spend)."
+        ),
+        "icon": "🌐",
         "providers": [
             {
                 "name": "xAI Grok OAuth (SuperGrok Subscription)",
