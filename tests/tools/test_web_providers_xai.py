@@ -1,7 +1,7 @@
 """Tests for the xAI Web Search provider (plugins/web/xai/).
 
 Covers:
-- XAIWebSearchProvider.is_available() — cheap probe (env var + auth.json)
+- XAIWebSearchProvider.is_available() — cheap probe (env var + dotenv + auth.json)
 - search() — JSON happy path, annotation fallback, citations fallback, empty results
 - search() error paths — HTTP error, request error, missing creds, mutually-exclusive domain filters,
   200-OK error envelope
@@ -83,6 +83,18 @@ class TestXAIProviderIsAvailable:
     def test_available_via_env_var(self, monkeypatch):
         monkeypatch.setenv("XAI_API_KEY", "sk-xai-test")
         from plugins.web.xai.provider import XAIWebSearchProvider
+        assert XAIWebSearchProvider().is_available() is True
+
+    def test_available_via_dotenv_fallback(self, monkeypatch):
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+        from tools import xai_http
+        from plugins.web.xai.provider import XAIWebSearchProvider
+
+        monkeypatch.setattr(
+            xai_http,
+            "get_env_value",
+            lambda name, default=None: "sk-xai-dotenv" if name == "XAI_API_KEY" else default,
+        )
         assert XAIWebSearchProvider().is_available() is True
 
     def test_available_via_auth_store(self, monkeypatch, tmp_path):
@@ -667,6 +679,17 @@ class TestXAIBackendWiring:
         from tools import web_tools
 
         monkeypatch.setenv("XAI_API_KEY", "sk-xai-test")
+        assert web_tools._is_backend_available("xai") is True
+
+    def test_is_backend_available_true_via_dotenv_fallback(self, monkeypatch):
+        from tools import web_tools, xai_http
+
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+        monkeypatch.setattr(
+            xai_http,
+            "get_env_value",
+            lambda name, default=None: "sk-xai-dotenv" if name == "XAI_API_KEY" else default,
+        )
         assert web_tools._is_backend_available("xai") is True
 
     def test_is_backend_available_false_when_no_creds(self, monkeypatch, tmp_path):
