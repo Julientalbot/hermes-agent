@@ -577,11 +577,17 @@ class GatewayStreamConsumer:
                             # Either the mid-stream edit didn't run (no
                             # visible update this tick) OR the adapter needs
                             # explicit finalize=True to close the stream.
-                            self._final_response_sent = await self._send_or_edit(
+                            sent = await self._send_or_edit(
                                 self._accumulated, finalize=True,
                             )
+                            self._final_response_sent = sent
+                            if sent:
+                                self._final_content_delivered = True
                         elif not self._already_sent:
-                            self._final_response_sent = await self._send_or_edit(self._accumulated)
+                            sent = await self._send_or_edit(self._accumulated)
+                            self._final_response_sent = sent
+                            if sent:
+                                self._final_content_delivered = True
                     return
 
                 if commentary_text is not None:
@@ -639,7 +645,11 @@ class GatewayStreamConsumer:
             # final_response_sent — which suppressed the gateway's
             # fallback send even when only intermediate text (e.g.
             # "Let me search…") had been delivered, not the real answer.
-            if _best_effort_ok and not self._final_response_sent:
+            if (
+                _best_effort_ok
+                and self._final_content_delivered
+                and not self._final_response_sent
+            ):
                 self._final_response_sent = True
         except Exception as e:
             logger.error("Stream consumer error: %s", e)
@@ -778,6 +788,7 @@ class GatewayStreamConsumer:
                         pass
                 self._already_sent = True
                 self._final_response_sent = True
+                self._final_content_delivered = True
                 return
 
         raw_limit = getattr(self.adapter, "MAX_MESSAGE_LENGTH", 4096)
@@ -819,6 +830,7 @@ class GatewayStreamConsumer:
                     # full response and create another duplicate.
                     self._already_sent = True
                     self._final_response_sent = True
+                    self._final_content_delivered = True
                     self._message_id = last_message_id
                     self._last_sent_text = last_successful_chunk
                     self._fallback_prefix = ""
@@ -856,6 +868,7 @@ class GatewayStreamConsumer:
         self._message_id = last_message_id
         self._already_sent = True
         self._final_response_sent = True
+        self._final_content_delivered = True
         self._last_sent_text = chunks[-1]
         self._fallback_prefix = ""
 
@@ -1100,6 +1113,7 @@ class GatewayStreamConsumer:
         self._already_sent = True
         self._last_sent_text = text
         self._final_response_sent = True
+        self._final_content_delivered = True
         return True
 
     async def _send_or_edit(self, text: str, *, finalize: bool = False) -> bool:
