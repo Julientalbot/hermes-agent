@@ -1195,17 +1195,17 @@ class TestInterimCommentaryMessages:
 
 
 class TestCancelledConsumerSetsFlags:
-    """Cancellation must set final_response_sent when already_sent is True.
+    """Cancellation must set final_response_sent only for confirmed final content.
 
     The 5-second stream_task timeout in gateway/run.py can cancel the
-    consumer while it's still processing.  If final_response_sent stays
-    False, the gateway falls through to the normal send path and the
-    user sees a duplicate message.
+    consumer while it's still processing.  Intermediate tool/progress text
+    can already be visible without being the final answer; only confirmed
+    final content should suppress the gateway fallback path.
     """
 
     @pytest.mark.asyncio
-    async def test_cancelled_with_already_sent_marks_final_response_sent(self):
-        """Cancelling after content was sent should set final_response_sent."""
+    async def test_cancelled_with_intermediate_send_does_not_mark_final(self):
+        """Cancelling after intermediate text should still allow final fallback."""
         adapter = MagicMock()
         adapter.send = AsyncMock(
             return_value=SimpleNamespace(success=True, message_id="msg_1")
@@ -1235,8 +1235,41 @@ class TestCancelledConsumerSetsFlags:
         except asyncio.CancelledError:
             pass
 
-        # The fix: final_response_sent should be True even though _DONE
-        # was never processed, preventing a duplicate message.
+        # already_sent may be only intermediate text.  Without confirmed final
+        # content, the gateway must still deliver the real final answer.
+        assert consumer.final_response_sent is False
+
+    @pytest.mark.asyncio
+    async def test_cancelled_with_final_content_delivered_marks_final(self):
+        """Cancelling after final content reached the user should suppress fallback."""
+        adapter = MagicMock()
+        adapter.send = AsyncMock(
+            return_value=SimpleNamespace(success=True, message_id="msg_1")
+        )
+        adapter.edit_message = AsyncMock(
+            return_value=SimpleNamespace(success=True)
+        )
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat_123",
+            StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5),
+        )
+
+        consumer.on_delta("Final answer")
+        task = asyncio.create_task(consumer.run())
+        await asyncio.sleep(0.08)
+
+        assert consumer.already_sent is True
+        consumer._final_content_delivered = True
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
         assert consumer.final_response_sent is True
 
     @pytest.mark.asyncio
@@ -1907,4 +1940,3 @@ class TestUtf16OverflowDetection:
         # auto-attr mock. Verified indirectly by all the other tests in
         # this file passing — they all use MagicMock adapters.
         assert consumer is not None
-

@@ -573,14 +573,16 @@ class GatewayStreamConsumer:
                             # Either the mid-stream edit didn't run (no
                             # visible update this tick) OR the adapter needs
                             # explicit finalize=True to close the stream.
-                            self._final_response_sent = await self._send_or_edit(
+                            sent = await self._send_or_edit(
                                 self._accumulated, finalize=True,
                             )
-                            if self._final_response_sent:
+                            self._final_response_sent = sent
+                            if sent:
                                 self._final_content_delivered = True
                         elif not self._already_sent:
-                            self._final_response_sent = await self._send_or_edit(self._accumulated)
-                            if self._final_response_sent:
+                            sent = await self._send_or_edit(self._accumulated)
+                            self._final_response_sent = sent
+                            if sent:
                                 self._final_content_delivered = True
                     return
 
@@ -639,7 +641,11 @@ class GatewayStreamConsumer:
             # final_response_sent — which suppressed the gateway's
             # fallback send even when only intermediate text (e.g.
             # "Let me search…") had been delivered, not the real answer.
-            if _best_effort_ok and not self._final_response_sent:
+            if (
+                _best_effort_ok
+                and self._final_content_delivered
+                and not self._final_response_sent
+            ):
                 self._final_response_sent = True
                 self._final_content_delivered = True
         except Exception as e:
@@ -1105,6 +1111,7 @@ class GatewayStreamConsumer:
         self._already_sent = True
         self._last_sent_text = text
         self._final_response_sent = True
+        self._final_content_delivered = True
         return True
 
     async def _send_or_edit(self, text: str, *, finalize: bool = False) -> bool:

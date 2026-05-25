@@ -270,7 +270,7 @@ def test_browser_use_managed_gateway_adds_idempotency_key_and_persists_external_
     assert sent_headers["X-Idempotency-Key"].startswith("browser-use-session-create:")
     sent_payload = post.call_args.kwargs["json"]
     assert sent_payload["timeout"] == 5
-    assert sent_payload["proxyCountryCode"] == "us"
+    assert sent_payload["proxyCountryCode"] == "fr"
     assert session["external_call_id"] == "call-browser-use-1"
 
 
