@@ -34,6 +34,16 @@ logger = logging.getLogger(__name__)
 _MEMORY_PLUGINS_DIR = Path(__file__).parent
 
 
+def _attach_to_parent_package(module_name: str, module: object) -> None:
+    """Mirror importlib's parent-package attribute wiring for manual loads."""
+    parent_name, _, child_name = module_name.rpartition(".")
+    if not parent_name or not child_name:
+        return
+    parent = sys.modules.get(parent_name)
+    if parent is not None:
+        setattr(parent, child_name, module)
+
+
 # ---------------------------------------------------------------------------
 # Directory helpers
 # ---------------------------------------------------------------------------
@@ -202,6 +212,7 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional["MemoryProvider"]:
     # Check if already loaded
     if module_name in sys.modules:
         mod = sys.modules[module_name]
+        _attach_to_parent_package(module_name, mod)
     else:
         # Handle relative imports within the plugin
         # First ensure the parent packages are registered
@@ -219,6 +230,7 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional["MemoryProvider"]:
                     if spec:
                         parent_mod = importlib.util.module_from_spec(spec)
                         sys.modules[parent] = parent_mod
+                        _attach_to_parent_package(parent, parent_mod)
                         try:
                             spec.loader.exec_module(parent_mod)
                         except Exception:
@@ -234,6 +246,7 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional["MemoryProvider"]:
 
         mod = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = mod
+        _attach_to_parent_package(module_name, mod)
 
         # Register submodules so relative imports work
         # e.g., "from .store import MemoryStore" in holographic plugin
@@ -249,6 +262,7 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional["MemoryProvider"]:
                 if sub_spec:
                     sub_mod = importlib.util.module_from_spec(sub_spec)
                     sys.modules[full_sub_name] = sub_mod
+                    _attach_to_parent_package(full_sub_name, sub_mod)
                     try:
                         sub_spec.loader.exec_module(sub_mod)
                     except Exception as e:
