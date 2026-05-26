@@ -212,6 +212,34 @@ def _merge_browser_library_path(existing_path: str = "") -> str:
 
     return os.pathsep.join(prefix_parts + path_parts)
 
+
+def _apply_managed_browser_runtime_env(browser_env: dict[str, str]) -> None:
+    """Expose Hermes-managed browser runtime assets to agent-browser.
+
+    Mutates ``browser_env`` in place. All values are process-local to the
+    agent-browser subprocess and do not change the gateway's global
+    environment.
+    """
+    browser_library_path = _merge_browser_library_path(
+        browser_env.get("LD_LIBRARY_PATH", "")
+    )
+    if browser_library_path:
+        browser_env["LD_LIBRARY_PATH"] = browser_library_path
+
+    root = get_hermes_home() / "browser-libs" / "root"
+    fontconfig_dir = root / "etc" / "fonts"
+    if fontconfig_dir.is_dir() and not browser_env.get("FONTCONFIG_PATH"):
+        browser_env["FONTCONFIG_PATH"] = str(fontconfig_dir)
+
+    data_dir = root / "usr" / "share"
+    if data_dir.is_dir():
+        default_xdg = "/usr/local/share:/usr/share"
+        existing = browser_env.get("XDG_DATA_DIRS") or default_xdg
+        parts = [p for p in existing.split(os.pathsep) if p]
+        data_dir_str = str(data_dir)
+        if data_dir_str not in parts:
+            browser_env["XDG_DATA_DIRS"] = os.pathsep.join([data_dir_str, *parts])
+
 # Throttle screenshot cleanup to avoid repeated full directory scans.
 _last_screenshot_cleanup_by_dir: dict[str, float] = {}
 
@@ -896,11 +924,7 @@ def _run_chrome_fallback_command(
     os.makedirs(task_socket_dir, mode=0o700, exist_ok=True)
     browser_env = {**os.environ, "AGENT_BROWSER_SOCKET_DIR": task_socket_dir}
     browser_env["PATH"] = _merge_browser_path(browser_env.get("PATH", ""))
-    browser_library_path = _merge_browser_library_path(
-        browser_env.get("LD_LIBRARY_PATH", "")
-    )
-    if browser_library_path:
-        browser_env["LD_LIBRARY_PATH"] = browser_library_path
+    _apply_managed_browser_runtime_env(browser_env)
 
     if "AGENT_BROWSER_IDLE_TIMEOUT_MS" not in browser_env:
         browser_env["AGENT_BROWSER_IDLE_TIMEOUT_MS"] = str(BROWSER_SESSION_INACTIVITY_TIMEOUT * 1000)
@@ -2038,11 +2062,7 @@ def _run_browser_command(
         # Ensure subprocesses inherit the same browser-specific PATH fallbacks
         # used during CLI discovery.
         browser_env["PATH"] = _merge_browser_path(browser_env.get("PATH", ""))
-        browser_library_path = _merge_browser_library_path(
-            browser_env.get("LD_LIBRARY_PATH", "")
-        )
-        if browser_library_path:
-            browser_env["LD_LIBRARY_PATH"] = browser_library_path
+        _apply_managed_browser_runtime_env(browser_env)
         browser_env["AGENT_BROWSER_SOCKET_DIR"] = task_socket_dir
 
         # Tell the agent-browser daemon to self-terminate after being idle

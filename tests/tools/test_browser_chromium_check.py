@@ -57,6 +57,18 @@ class TestBrowserLibraryPath:
 
         assert bt._merge_browser_library_path("") == ""
 
+    def test_applies_managed_fontconfig_and_data_dirs(self, monkeypatch, tmp_path):
+        root = tmp_path / "browser-libs" / "root"
+        (root / "etc" / "fonts").mkdir(parents=True)
+        (root / "usr" / "share").mkdir(parents=True)
+        monkeypatch.setattr(bt, "get_hermes_home", lambda: tmp_path)
+        env = {"XDG_DATA_DIRS": "/usr/share"}
+
+        bt._apply_managed_browser_runtime_env(env)
+
+        assert env["FONTCONFIG_PATH"] == str(root / "etc" / "fonts")
+        assert env["XDG_DATA_DIRS"].split(os.pathsep)[0] == str(root / "usr" / "share")
+
 
 class TestChromiumInstalled:
     def test_true_when_plain_chromium_on_path(self, monkeypatch):
