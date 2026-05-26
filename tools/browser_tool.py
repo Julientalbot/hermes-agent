@@ -3532,6 +3532,8 @@ def _chromium_installed() -> bool:
        ``chromium-browser``, ``chrome``).
     3. Playwright's browser cache (current logic) — directories containing
        ``chromium-*`` or ``chromium_headless_shell-*``.
+    4. agent-browser's own browser cache — directories like
+       ``~/.agent-browser/browsers/chrome-*`` containing a ``chrome`` binary.
 
     agent-browser (0.26+) downloads Playwright's chromium / headless-shell
     builds into ``PLAYWRIGHT_BROWSERS_PATH`` and won't start without at least
@@ -3576,6 +3578,22 @@ def _chromium_installed() -> bool:
             if entry.startswith("chromium-") or entry.startswith(
                 "chromium_headless_shell-"
             ):
+                _cached_chromium_installed = True
+                return True
+
+    agent_browser_root = os.path.join(
+        os.path.expanduser("~"), ".agent-browser", "browsers"
+    )
+    if os.path.isdir(agent_browser_root):
+        try:
+            entries = os.listdir(agent_browser_root)
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.startswith("chrome-"):
+                continue
+            chrome_path = os.path.join(agent_browser_root, entry, "chrome")
+            if os.path.isfile(chrome_path):
                 _cached_chromium_installed = True
                 return True
 

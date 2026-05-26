@@ -61,6 +61,17 @@ class TestChromiumInstalled:
         (tmp_path / "chromium_headless_shell-1208").mkdir()
         assert bt._chromium_installed() is True
 
+    def test_true_when_agent_browser_chrome_cache_present(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("AGENT_BROWSER_EXECUTABLE_PATH", raising=False)
+        monkeypatch.setattr(bt.shutil, "which", lambda name: None)
+        monkeypatch.setattr(bt, "_chromium_search_roots", lambda: [])
+        monkeypatch.setattr("os.path.expanduser", lambda p: str(tmp_path))
+        chrome = tmp_path / ".agent-browser" / "browsers" / "chrome-149.0.7827.22" / "chrome"
+        chrome.parent.mkdir(parents=True)
+        chrome.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        assert bt._chromium_installed() is True
+
 
 
 
@@ -116,5 +127,4 @@ class TestRunBrowserCommandChromiumGuard:
     """Verify _run_browser_command fails fast (no timeout hang) when
     Chromium is missing in local mode.
     """
-
 
