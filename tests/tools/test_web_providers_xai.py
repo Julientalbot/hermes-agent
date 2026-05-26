@@ -716,6 +716,36 @@ class TestXAIBackendWiring:
         monkeypatch.setattr(web_tools, "_load_web_config", lambda: {"backend": "xai"})
         assert web_tools._get_backend() == "xai"
 
+    def test_configured_search_backend_xai_exposes_web_search(self, monkeypatch):
+        from tools import web_tools
+
+        monkeypatch.setattr(web_tools, "_load_web_config", lambda: {
+            "backend": "",
+            "search_backend": "xai",
+            "extract_backend": "",
+        })
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+
+        assert web_tools.check_web_search_api_key() is True
+        assert web_tools.check_web_extract_api_key() is False
+        assert web_tools.check_web_api_key() is True
+
+    def test_xai_key_without_web_backend_does_not_enable_web_search(self, monkeypatch):
+        from tools import web_tools
+
+        monkeypatch.setattr(web_tools, "_load_web_config", lambda: {})
+        for key in (
+            "FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "PARALLEL_API_KEY",
+            "TAVILY_API_KEY", "EXA_API_KEY", "SEARXNG_URL", "BRAVE_SEARCH_API_KEY",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+        monkeypatch.setattr(web_tools, "_is_tool_gateway_ready", lambda: False)
+        monkeypatch.setattr(web_tools, "_ddgs_package_importable", lambda: False)
+
+        assert web_tools.check_web_search_api_key() is False
+        assert web_tools.check_web_api_key() is False
+
     def test_xai_not_in_legacy_backend_candidate_chain(self, monkeypatch):
         """The hardcoded ``backend_candidates`` tuple in ``_get_backend()``
         does not include xAI — by design, since the no-config legacy
