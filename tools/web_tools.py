@@ -268,6 +268,7 @@ def _web_requires_env() -> list[str]:
     simply don't have the vars set, so the extra entries are harmless.
     """
     return [
+        "XAI_API_KEY",
         "EXA_API_KEY",
         "PARALLEL_API_KEY",
         "TAVILY_API_KEY",
@@ -278,6 +279,36 @@ def _web_requires_env() -> list[str]:
         "TOOL_GATEWAY_SCHEME",
         "TOOL_GATEWAY_USER_TOKEN",
     ]
+
+
+_SEARCH_BACKENDS = {
+    "exa",
+    "parallel",
+    "firecrawl",
+    "tavily",
+    "searxng",
+    "brave-free",
+    "ddgs",
+    "xai",
+}
+_EXTRACT_BACKENDS = {"exa", "parallel", "firecrawl", "tavily"}
+_AUTO_DETECTED_SEARCH_BACKENDS = (
+    "exa",
+    "parallel",
+    "firecrawl",
+    "tavily",
+    "searxng",
+    "brave-free",
+    "ddgs",
+)
+
+
+def _configured_backend_for(capability: str) -> str:
+    cfg = _load_web_config()
+    specific = (cfg.get(f"{capability}_backend") or "").lower().strip()
+    if specific:
+        return specific
+    return (cfg.get("backend") or "").lower().strip()
 
 
 # ─── Parallel / Tavily / Firecrawl helpers — moved into plugins ──────────────
@@ -1363,16 +1394,36 @@ async def web_crawl_tool(
         return tool_error(error_msg)
 
 
-# Convenience function to check Firecrawl credentials
-def check_web_api_key() -> bool:
-    """Check whether the configured web backend is available."""
-    configured = _load_web_config().get("backend", "").lower().strip()
-    if configured in {"exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs"}:
+def check_web_search_api_key() -> bool:
+    """Check whether ``web_search`` has an available backend.
+
+    xAI web search is deliberately enabled only when selected in config via
+    ``web.search_backend`` or ``web.backend``. A stray ``XAI_API_KEY`` may be
+    present for chat inference, and should not silently re-route web search.
+    """
+    configured = _configured_backend_for("search")
+    if configured in _SEARCH_BACKENDS:
         return _is_backend_available(configured)
     return any(
         _is_backend_available(backend)
-        for backend in ("exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs")
+        for backend in _AUTO_DETECTED_SEARCH_BACKENDS
     )
+
+
+def check_web_extract_api_key() -> bool:
+    """Check whether ``web_extract`` has an extract-capable backend."""
+    configured = _configured_backend_for("extract")
+    if configured:
+        return configured in _EXTRACT_BACKENDS and _is_backend_available(configured)
+    return any(
+        _is_backend_available(backend)
+        for backend in _EXTRACT_BACKENDS
+    )
+
+
+def check_web_api_key() -> bool:
+    """Check whether any configured web capability is available."""
+    return check_web_search_api_key() or check_web_extract_api_key()
 
 
 def check_auxiliary_model() -> bool:
@@ -1542,7 +1593,7 @@ registry.register(
     toolset="web",
     schema=WEB_SEARCH_SCHEMA,
     handler=lambda args, **kw: web_search_tool(args.get("query", ""), limit=args.get("limit", 5)),
-    check_fn=check_web_api_key,
+    check_fn=check_web_search_api_key,
     requires_env=_web_requires_env(),
     emoji="🔍",
     max_result_size_chars=100_000,
@@ -1553,7 +1604,7 @@ registry.register(
     schema=WEB_EXTRACT_SCHEMA,
     handler=lambda args, **kw: web_extract_tool(
         args.get("urls", [])[:5] if isinstance(args.get("urls"), list) else [], "markdown"),
-    check_fn=check_web_api_key,
+    check_fn=check_web_extract_api_key,
     requires_env=_web_requires_env(),
     is_async=True,
     emoji="📄",
