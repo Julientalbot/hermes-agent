@@ -40,6 +40,24 @@ class TestChromiumSearchRoots:
         assert any(r == os.path.join(home, ".cache", "ms-playwright") for r in roots)
 
 
+class TestBrowserLibraryPath:
+    def test_adds_hermes_browser_libs_first(self, monkeypatch, tmp_path):
+        lib_dir = tmp_path / "browser-libs" / "root" / "usr" / "lib" / "x86_64-linux-gnu"
+        lib_dir.mkdir(parents=True)
+        monkeypatch.setattr(bt, "get_hermes_home", lambda: tmp_path)
+
+        merged = bt._merge_browser_library_path("/usr/lib")
+        parts = merged.split(os.pathsep)
+
+        assert parts[0] == str(lib_dir)
+        assert parts[-1] == "/usr/lib"
+
+    def test_empty_when_no_hermes_browser_libs(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(bt, "get_hermes_home", lambda: tmp_path)
+
+        assert bt._merge_browser_library_path("") == ""
+
+
 class TestChromiumInstalled:
     def test_true_when_plain_chromium_on_path(self, monkeypatch):
         monkeypatch.delenv("AGENT_BROWSER_EXECUTABLE_PATH", raising=False)
@@ -127,4 +145,3 @@ class TestRunBrowserCommandChromiumGuard:
     """Verify _run_browser_command fails fast (no timeout hang) when
     Chromium is missing in local mode.
     """
-
