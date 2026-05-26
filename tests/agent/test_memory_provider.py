@@ -1,6 +1,7 @@
 """Tests for the memory provider interface, manager, and builtin provider."""
 
 import json
+import sys
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -401,6 +402,15 @@ class TestPluginMemoryDiscovery:
         """load_memory_provider returns None for unknown names."""
         from plugins.memory import load_memory_provider
         assert load_memory_provider("nonexistent_provider") is None
+
+    def test_manual_plugin_load_wires_parent_package_attrs(self):
+        """Manual provider imports should behave like normal package imports."""
+        import plugins.memory as memory_plugins
+        from plugins.memory import load_memory_provider
+
+        assert load_memory_provider("honcho") is not None
+        assert memory_plugins.honcho is sys.modules["plugins.memory.honcho"]
+        assert memory_plugins.honcho.client is sys.modules["plugins.memory.honcho.client"]
 
 
 class TestUserInstalledProviderDiscovery:
