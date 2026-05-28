@@ -16,6 +16,11 @@ Three concerns, all tied to ``AIAgent`` boot-time / runtime IO setup:
    ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``ALL_PROXY``;
    ``_get_proxy_for_base_url`` respects ``NO_PROXY`` for the given base URL.
 
+4. **Optional xAI request metadata capture** — when
+   ``HERMES_XAI_TRACE_CAPTURE`` is truthy, a best-effort HTTPX hook records
+   metadata-only xAI request IDs for FSO joins. It never copies prompts,
+   responses, tools, or transcripts.
+
 ``run_agent`` re-exports every name so existing
 ``from run_agent import _get_proxy_from_env`` imports keep working
 unchanged.
@@ -156,6 +161,23 @@ def _install_safe_stdio() -> None:
 OpenAI = _OpenAIProxy()
 
 
+def _install_xai_trace_capture_from_env() -> bool:
+    """Install optional metadata-only xAI trace capture.
+
+    Kept behind a local import so normal startup avoids importing httpx unless
+    the operator explicitly enables the capture env var.
+    """
+    try:
+        from agent.xai_trace_capture import install_xai_trace_capture_from_env
+
+        return install_xai_trace_capture_from_env()
+    except Exception:
+        return False
+
+
+_install_xai_trace_capture_from_env()
+
+
 __all__ = [
     "OpenAI",
     "_OpenAIProxy",
@@ -164,4 +186,5 @@ __all__ = [
     "_install_safe_stdio",
     "_get_proxy_from_env",
     "_get_proxy_for_base_url",
+    "_install_xai_trace_capture_from_env",
 ]

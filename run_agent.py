@@ -78,6 +78,7 @@ from agent.process_bootstrap import (
     _load_openai_cls,
     _SafeWriter,
     _install_safe_stdio,
+    _install_xai_trace_capture_from_env,
     _get_proxy_from_env,
     _get_proxy_for_base_url,
 )
@@ -98,6 +99,8 @@ if _loaded_env_paths:
         logger.info("Loaded environment variables from %s", _env_path)
 else:
     logger.info("No .env file found. Using system environment variables.")
+
+_install_xai_trace_capture_from_env()
 
 
 # Import our tool system
