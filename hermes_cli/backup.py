@@ -65,6 +65,20 @@ _EXCLUDED_NAMES = {
 _SECRET_FILE_NAMES = {".env", "auth.json", "state.db"}
 
 
+def _is_nested_repo(dir_path: Path) -> bool:
+    """Return True if *dir_path* is the root of a nested git checkout.
+
+    A ``.git`` entry marks a repository root; it's a directory for a normal
+    clone and a file (``gitdir: ...``) for worktrees / submodules.  Nested
+    checkouts below HERMES_HOME (e.g. a hermes-agent clone vendored inside a
+    skill dir) are reproducible code, not instance state — a 2.79 GB backup
+    was traced to one such slurped clone — so the walk should not descend
+    into them.  Name-based exclusion can't catch this: a clone can have any
+    directory name.
+    """
+    return (dir_path / ".git").exists()
+
+
 def _should_exclude(rel_path: Path) -> bool:
     """Return True if *rel_path* (relative to hermes root) should be skipped."""
     parts = rel_path.parts
@@ -176,11 +190,13 @@ def run_backup(args) -> None:
         dp = Path(dirpath)
         rel_dir = dp.relative_to(hermes_root)
 
-        # Prune excluded directories in-place so os.walk doesn't descend
+        # Prune excluded directories in-place so os.walk doesn't descend.
+        # Also prune nested git checkouts (any subdir holding a .git) — those
+        # are reproducible code, not instance state.
         orig_dirnames = dirnames[:]
         dirnames[:] = [
             d for d in dirnames
-            if d not in _EXCLUDED_DIRS
+            if d not in _EXCLUDED_DIRS and not _is_nested_repo(dp / d)
         ]
         for removed in set(orig_dirnames) - set(dirnames):
             skipped_dirs.add(str(rel_dir / removed))
@@ -827,8 +843,13 @@ def _write_full_zip_backup(out_path: Path, hermes_root: Path) -> Optional[Path]:
     try:
         for dirpath, dirnames, filenames in os.walk(hermes_root, followlinks=False):
             dp = Path(dirpath)
-            # Prune excluded directories in-place so os.walk doesn't descend
-            dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
+            # Prune excluded directories in-place so os.walk doesn't descend.
+            # Also prune nested git checkouts (any subdir holding a .git) —
+            # those are reproducible code, not instance state.
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in _EXCLUDED_DIRS and not _is_nested_repo(dp / d)
+            ]
 
             for fname in filenames:
                 fpath = dp / fname

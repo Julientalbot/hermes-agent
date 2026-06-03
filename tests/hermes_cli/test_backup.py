@@ -264,6 +264,57 @@ class TestBackup:
         zips = list(tmp_path.glob("hermes-backup-*.zip"))
         assert len(zips) == 1
 
+    def test_excludes_nested_git_checkout(self, tmp_path, monkeypatch):
+        """Backup must not recurse into a nested git checkout living below
+        HERMES_HOME (e.g. a hermes-agent clone vendored inside a skill dir).
+
+        Such a subtree is reproducible code, not instance state — slurping
+        one was traced to a 2.79 GB backup.  Name-based exclusion can't catch
+        it because a clone can have any directory name, so the fix prunes any
+        subdir that holds a .git.  The skill's own (non-repo) data must stay.
+        """
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        _make_hermes_tree(hermes_home)
+
+        # A real instance file the backup MUST keep.
+        (hermes_home / "config.yaml").write_text("model: test\n")
+
+        # A nested git checkout under a skill dir — arbitrary dir name, so the
+        # name-based excludes wouldn't catch it.  Its working-tree file lives
+        # under a non-excluded name and must NOT be backed up.
+        nested = hermes_home / "skills" / "autonomous-ai-agents" / "vendored-clone"
+        nested.mkdir(parents=True)
+        (nested / ".git").mkdir()
+        (nested / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        (nested / "huge_source.py").write_text("# reproducible code, do not back up\n")
+
+        # The skill's OWN config (not a nested repo) must still be backed up.
+        (hermes_home / "skills" / "autonomous-ai-agents" / "config.yaml").write_text(
+            "skill: real-instance-data\n"
+        )
+
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        out_zip = tmp_path / "backup.zip"
+        args = Namespace(output=str(out_zip))
+
+        from hermes_cli.backup import run_backup
+        run_backup(args)
+
+        with zipfile.ZipFile(out_zip, "r") as zf:
+            names = zf.namelist()
+
+        # Nested-repo working tree pruned entirely.
+        nested_leaked = [n for n in names if "vendored-clone" in n]
+        assert nested_leaked == [], f"nested git checkout leaked into backup: {nested_leaked}"
+
+        # Real instance data preserved.
+        assert "config.yaml" in names
+        assert "skills/my-skill/SKILL.md" in names
+        assert "skills/autonomous-ai-agents/config.yaml" in names
+
     def test_skips_symlinked_files(self, tmp_path, monkeypatch):
         """Backup must not dereference symlinks and leak files outside HERMES_HOME."""
         hermes_home = tmp_path / ".hermes"
