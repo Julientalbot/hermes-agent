@@ -306,3 +306,35 @@ def test_explicit_non_stream_stale_timeout_is_honored_for_local_endpoints(monkey
     )
 
     assert agent._compute_non_stream_stale_timeout([]) == 300.0
+
+
+def test_non_stream_stale_timeout_estimates_responses_input(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    monkeypatch.delenv("HERMES_API_CALL_STALE_TIMEOUT", raising=False)
+
+    from run_agent import AIAgent
+    agent = AIAgent(
+        model="grok-4.3-agent-0511",
+        provider="xai",
+        api_key="sk-dummy",
+        base_url="https://api.x.ai/v1",
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+        platform="cli",
+    )
+
+    payload = {
+        "model": "grok-4.3-agent-0511",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "x" * 220_000}],
+            }
+        ],
+    }
+
+    assert agent._estimate_request_payload_tokens(payload) > 50_000
+    assert agent._compute_non_stream_stale_timeout(payload) == 450.0

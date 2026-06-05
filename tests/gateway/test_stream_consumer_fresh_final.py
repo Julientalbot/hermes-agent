@@ -98,6 +98,7 @@ class TestFreshFinalForLongLivedPreviews:
         # State was updated to the new message id.
         assert consumer._message_id == "fresh_final"
         assert consumer._final_response_sent is True
+        assert consumer._final_content_delivered is True
 
     @pytest.mark.asyncio
     async def test_fresh_final_without_delete_support_is_best_effort(self):

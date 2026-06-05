@@ -1119,6 +1119,46 @@ def test_anthropic_messages_in_valid_api_modes():
     assert rp._parse_api_mode("anthropic_messages") == "anthropic_messages"
 
 
+def test_openai_chat_transport_alias_maps_to_chat_completions():
+    assert rp._parse_api_mode("openai_chat") == "chat_completions"
+
+
+def test_xai_provider_transport_override_can_pin_chat_completions(monkeypatch):
+    """xAI defaults to Responses, but an explicit operator transport must win."""
+
+    class _Pool:
+        def has_credentials(self):
+            return False
+
+    monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "xai")
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "xai", "default": "grok-4.3-agent-0511"},
+    )
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {"providers": {"xai": {"transport": "chat_completions"}}},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(
+        rp,
+        "resolve_api_key_provider_credentials",
+        lambda provider: {
+            "provider": provider,
+            "api_key": "sk-xai-test",
+            "base_url": "https://api.x.ai/v1",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="xai")
+
+    assert resolved["provider"] == "xai"
+    assert resolved["api_mode"] == "chat_completions"
+
+
 def test_api_key_provider_anthropic_url_auto_detection(monkeypatch):
     """API-key providers with /anthropic base URL should auto-detect anthropic_messages mode."""
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "minimax")

@@ -1068,17 +1068,17 @@ class TestInterimCommentaryMessages:
 
 
 class TestCancelledConsumerSetsFlags:
-    """Cancellation must set final_response_sent when already_sent is True.
+    """Cancellation must not promote a partial stream to final delivery.
 
     The 5-second stream_task timeout in gateway/run.py can cancel the
-    consumer while it's still processing.  If final_response_sent stays
-    False, the gateway falls through to the normal send path and the
-    user sees a duplicate message.
+    consumer while it's still processing.  If a partial preview is marked
+    as a final response, the gateway suppresses the normal final send and
+    the user sees a truncated answer.
     """
 
     @pytest.mark.asyncio
-    async def test_cancelled_with_already_sent_marks_final_response_sent(self):
-        """Cancelling after content was sent should set final_response_sent."""
+    async def test_cancelled_with_partial_preview_does_not_mark_final(self):
+        """Cancelling after partial content was sent should not claim final delivery."""
         adapter = MagicMock()
         adapter.send = AsyncMock(
             return_value=SimpleNamespace(success=True, message_id="msg_1")
@@ -1108,9 +1108,8 @@ class TestCancelledConsumerSetsFlags:
         except asyncio.CancelledError:
             pass
 
-        # The fix: final_response_sent should be True even though _DONE
-        # was never processed, preventing a duplicate message.
-        assert consumer.final_response_sent is True
+        assert consumer.final_response_sent is False
+        assert consumer.final_content_delivered is False
 
     @pytest.mark.asyncio
     async def test_cancelled_without_any_sends_does_not_mark_final(self):
@@ -1780,4 +1779,3 @@ class TestUtf16OverflowDetection:
         # auto-attr mock. Verified indirectly by all the other tests in
         # this file passing — they all use MagicMock adapters.
         assert consumer is not None
-

@@ -3519,14 +3519,37 @@ class AIAgent:
 
         return 300.0, True
 
-    def _compute_non_stream_stale_timeout(self, messages: list[dict[str, Any]]) -> float:
+    @staticmethod
+    def _estimate_request_payload_tokens(payload: Any) -> int:
+        """Rough token estimate for chat-completions and Responses payloads."""
+        if payload is None:
+            return 0
+        if isinstance(payload, dict):
+            parts: list[Any] = []
+            for key in ("messages", "input"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    parts.extend(value)
+                elif value is not None:
+                    parts.append(value)
+            if not parts:
+                for key in ("instructions", "prompt"):
+                    value = payload.get(key)
+                    if value is not None:
+                        parts.append(value)
+            payload = parts if parts else payload
+        if isinstance(payload, list):
+            return sum(len(str(v)) for v in payload) // 4
+        return len(str(payload)) // 4
+
+    def _compute_non_stream_stale_timeout(self, payload: Any) -> float:
         """Compute the effective non-stream stale timeout for this request."""
         stale_base, uses_implicit_default = self._resolved_api_call_stale_timeout_base()
         base_url = getattr(self, "_base_url", None) or self.base_url or ""
         if uses_implicit_default and base_url and is_local_endpoint(base_url):
             return float("inf")
 
-        est_tokens = sum(len(str(v)) for v in messages) // 4
+        est_tokens = self._estimate_request_payload_tokens(payload)
         if est_tokens > 100_000:
             return max(stale_base, 600.0)
         if est_tokens > 50_000:
@@ -7837,12 +7860,20 @@ class AIAgent:
         # httpx timeout (default 1800s) with zero feedback.  The stale
         # detector kills the connection early so the main retry loop can
         # apply richer recovery (credential rotation, provider fallback).
-        _stale_timeout = self._compute_non_stream_stale_timeout(
-            api_kwargs.get("messages", [])
+        _stale_timeout = self._compute_non_stream_stale_timeout(api_kwargs)
+        _wait_desc = (
+            "waiting for Responses API stream"
+            if self.api_mode == "codex_responses"
+            else "waiting for non-streaming API response"
+        )
+        _stale_label = (
+            "Responses API stream"
+            if self.api_mode == "codex_responses"
+            else "non-streaming"
         )
 
         _call_start = time.time()
-        self._touch_activity("waiting for non-streaming API response")
+        self._touch_activity(_wait_desc)
 
         t = threading.Thread(target=_call, daemon=True)
         t.start()
@@ -7856,23 +7887,24 @@ class AIAgent:
             if _poll_count % 100 == 0:  # 100 × 0.3s = 30s
                 _elapsed = time.time() - _call_start
                 self._touch_activity(
-                    f"waiting for non-streaming response ({int(_elapsed)}s elapsed)"
+                    f"{_wait_desc} ({int(_elapsed)}s elapsed)"
                 )
 
             # Stale-call detector: kill the connection if no response
             # arrives within the configured timeout.
             _elapsed = time.time() - _call_start
             if _elapsed > _stale_timeout:
-                _est_ctx = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
+                _est_ctx = self._estimate_request_payload_tokens(api_kwargs)
                 logger.warning(
-                    "Non-streaming API call stale for %.0fs (threshold %.0fs). "
+                    "%s stale for %.0fs (threshold %.0fs). "
                     "model=%s context=~%s tokens. Killing connection.",
-                    _elapsed, _stale_timeout,
+                    _stale_label, _elapsed, _stale_timeout,
                     api_kwargs.get("model", "unknown"), f"{_est_ctx:,}",
                 )
                 self._emit_status(
                     f"⚠️ No response from provider for {int(_elapsed)}s "
-                    f"(non-streaming, model: {api_kwargs.get('model', 'unknown')}). "
+                    f"({_stale_label}, model: {api_kwargs.get('model', 'unknown')}, "
+                    f"context: ~{_est_ctx:,} tokens). "
                     f"Aborting call."
                 )
                 try:
@@ -7886,13 +7918,13 @@ class AIAgent:
                 except Exception:
                     pass
                 self._touch_activity(
-                    f"stale non-streaming call killed after {int(_elapsed)}s"
+                    f"stale {_stale_label} killed after {int(_elapsed)}s"
                 )
                 # Wait briefly for the thread to notice the closed connection.
                 t.join(timeout=2.0)
                 if result["error"] is None and result["response"] is None:
                     result["error"] = TimeoutError(
-                        f"Non-streaming API call timed out after {int(_elapsed)}s "
+                        f"{_stale_label} timed out after {int(_elapsed)}s "
                         f"with no response (threshold: {int(_stale_timeout)}s)"
                     )
                 break
@@ -8825,7 +8857,11 @@ class AIAgent:
                 if request_client is not None:
                     self._close_request_openai_client(request_client, reason="stream_request_complete")
 
-        _stream_stale_timeout_base = float(os.getenv("HERMES_STREAM_STALE_TIMEOUT", 180.0))
+        _provider_stream_stale = get_provider_stale_timeout(self.provider, self.model)
+        if _provider_stream_stale is not None:
+            _stream_stale_timeout_base = _provider_stream_stale
+        else:
+            _stream_stale_timeout_base = float(os.getenv("HERMES_STREAM_STALE_TIMEOUT", 180.0))
         # Local providers (Ollama, oMLX, llama-cpp) can take 300+ seconds
         # for prefill on large contexts.  Disable the stale detector unless
         # the user explicitly set HERMES_STREAM_STALE_TIMEOUT.
@@ -8838,7 +8874,7 @@ class AIAgent:
             # when the context is large.  Without this, the stale detector kills
             # healthy connections during the model's thinking phase, producing
             # spurious RemoteProtocolError ("peer closed connection").
-            _est_tokens = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
+            _est_tokens = self._estimate_request_payload_tokens(api_kwargs)
             if _est_tokens > 100_000:
                 _stream_stale_timeout = max(_stream_stale_timeout_base, 300.0)
             elif _est_tokens > 50_000:
@@ -8874,7 +8910,7 @@ class AIAgent:
             # inner retry loop can start a fresh connection.
             _stale_elapsed = time.time() - last_chunk_time["t"]
             if _stale_elapsed > _stream_stale_timeout:
-                _est_ctx = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
+                _est_ctx = self._estimate_request_payload_tokens(api_kwargs)
                 logger.warning(
                     "Stream stale for %.0fs (threshold %.0fs) — no chunks received. "
                     "model=%s context=~%s tokens. Killing connection.",

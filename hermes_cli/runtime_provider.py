@@ -186,9 +186,43 @@ def _parse_api_mode(raw: Any) -> Optional[str]:
     """Validate an api_mode value from config. Returns None if invalid."""
     if isinstance(raw, str):
         normalized = raw.strip().lower()
+        aliases = {
+            "openai_chat": "chat_completions",
+            "openai-chat": "chat_completions",
+            "chat": "chat_completions",
+        }
+        normalized = aliases.get(normalized, normalized)
         if normalized in _VALID_API_MODES:
             return normalized
     return None
+
+
+def _configured_api_mode_for_provider(
+    provider: str,
+    model_cfg: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Return an explicit api_mode/transport override for ``provider``.
+
+    Built-in providers normally own their transport, but operators can still
+    need to pin an endpoint back to chat-completions during provider-specific
+    incidents.  Accept both the model-level ``api_mode`` spelling and the
+    providers.<id>.transport spelling written by config migrations.
+    """
+    model_cfg = model_cfg or {}
+    configured_provider = str(model_cfg.get("provider") or "").strip().lower()
+    configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
+    if configured_mode and _provider_supports_explicit_api_mode(provider, configured_provider):
+        return configured_mode
+
+    try:
+        config = load_config()
+    except Exception:
+        config = {}
+    providers = config.get("providers", {}) if isinstance(config, dict) else {}
+    provider_cfg = providers.get(provider, {}) if isinstance(providers, dict) else {}
+    if not isinstance(provider_cfg, dict):
+        return None
+    return _parse_api_mode(provider_cfg.get("api_mode") or provider_cfg.get("transport"))
 
 
 def _maybe_apply_codex_app_server_runtime(
@@ -267,7 +301,7 @@ def _resolve_runtime_from_pool_entry(
     elif provider == "openrouter":
         base_url = base_url or OPENROUTER_BASE_URL
     elif provider == "xai":
-        api_mode = "codex_responses"
+        api_mode = _configured_api_mode_for_provider(provider, model_cfg) or "codex_responses"
     elif provider == "nous":
         api_mode = "chat_completions"
     elif provider == "copilot":
@@ -934,7 +968,7 @@ def _resolve_explicit_runtime(
         if provider == "copilot":
             api_mode = _copilot_runtime_api_mode(model_cfg, api_key)
         elif provider == "xai":
-            api_mode = "codex_responses"
+            api_mode = _configured_api_mode_for_provider(provider, model_cfg) or "codex_responses"
         else:
             configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
             if configured_mode:
@@ -1374,7 +1408,7 @@ def resolve_runtime_provider(
         if provider == "copilot":
             api_mode = _copilot_runtime_api_mode(model_cfg, creds.get("api_key", ""))
         elif provider == "xai":
-            api_mode = "codex_responses"
+            api_mode = _configured_api_mode_for_provider(provider, model_cfg) or "codex_responses"
         else:
             configured_provider = str(model_cfg.get("provider") or "").strip().lower()
             # Only honor persisted api_mode when it belongs to the same provider family.

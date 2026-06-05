@@ -490,9 +490,13 @@ class TestFinalContentDeliveredSuppression:
         )
         response = {"final_response": "Hello!", "response_previewed": False}
 
-        _streamed = bool(getattr(sc, "final_response_sent", False))
-        _previewed = bool(response.get("response_previewed"))
         _content_delivered = bool(getattr(sc, "final_content_delivered", False))
+        _has_delivery_flag = hasattr(sc, "final_content_delivered")
+        _streamed = bool(
+            getattr(sc, "final_response_sent", False)
+            and (_content_delivered or not _has_delivery_flag)
+        )
+        _previewed = bool(response.get("response_previewed"))
         _is_empty_sentinel = (
             not response.get("final_response")
             or response.get("final_response") == "(empty)"
@@ -503,6 +507,57 @@ class TestFinalContentDeliveredSuppression:
         assert response.get("already_sent") is True
 
     def test_intermediate_text_only_does_not_suppress(self):
+        """final_response_sent can be set by cancellation while content is partial;
+        final_content_delivered=False must NOT suppress the real final answer."""
+        sc = SimpleNamespace(
+            already_sent=True,
+            final_response_sent=True,
+            final_content_delivered=False,
+        )
+        response = {"final_response": "Real answer", "response_previewed": False}
+
+        _content_delivered = bool(getattr(sc, "final_content_delivered", False))
+        _has_delivery_flag = hasattr(sc, "final_content_delivered")
+        _streamed = bool(
+            getattr(sc, "final_response_sent", False)
+            and (_content_delivered or not _has_delivery_flag)
+        )
+        _previewed = bool(response.get("response_previewed"))
+        _is_empty_sentinel = (
+            not response.get("final_response")
+            or response.get("final_response") == "(empty)"
+        )
+        if not _is_empty_sentinel and (_streamed or _previewed or _content_delivered):
+            response["already_sent"] = True
+
+        assert "already_sent" not in response
+
+    def test_old_stream_consumer_without_delivery_flag_still_suppresses(self):
+        """Older stream consumers did not expose final_content_delivered; keep
+        backwards-compatible duplicate suppression for that shape."""
+        sc = SimpleNamespace(
+            already_sent=True,
+            final_response_sent=True,
+        )
+        response = {"final_response": "Real answer", "response_previewed": False}
+
+        _content_delivered = bool(getattr(sc, "final_content_delivered", False))
+        _has_delivery_flag = hasattr(sc, "final_content_delivered")
+        _streamed = bool(
+            getattr(sc, "final_response_sent", False)
+            and (_content_delivered or not _has_delivery_flag)
+        )
+        _previewed = bool(response.get("response_previewed"))
+        _is_empty_sentinel = (
+            not response.get("final_response")
+            or response.get("final_response") == "(empty)"
+        )
+        if not _is_empty_sentinel and (_streamed or _previewed or _content_delivered):
+            response["already_sent"] = True
+
+        assert response.get("already_sent") is True
+
+    def test_already_sent_without_final_flags_does_not_suppress(self):
         """already_sent=True from intermediate text + final_content_delivered=False
         must NOT suppress (user still needs the real final answer)."""
         sc = SimpleNamespace(
@@ -512,9 +567,13 @@ class TestFinalContentDeliveredSuppression:
         )
         response = {"final_response": "Real answer", "response_previewed": False}
 
-        _streamed = bool(getattr(sc, "final_response_sent", False))
-        _previewed = bool(response.get("response_previewed"))
         _content_delivered = bool(getattr(sc, "final_content_delivered", False))
+        _has_delivery_flag = hasattr(sc, "final_content_delivered")
+        _streamed = bool(
+            getattr(sc, "final_response_sent", False)
+            and (_content_delivered or not _has_delivery_flag)
+        )
+        _previewed = bool(response.get("response_previewed"))
         _is_empty_sentinel = (
             not response.get("final_response")
             or response.get("final_response") == "(empty)"

@@ -16501,15 +16501,20 @@ class GatewayRunner:
         if isinstance(response, dict) and not response.get("failed"):
             _final = response.get("final_response") or ""
             _is_empty_sentinel = not _final or _final == "(empty)"
+            _content_delivered = bool(
+                _sc and getattr(_sc, "final_content_delivered", False)
+            )
+            _has_delivery_flag = bool(
+                _sc is not None and hasattr(_sc, "final_content_delivered")
+            )
             _streamed = bool(
-                _sc and getattr(_sc, "final_response_sent", False)
+                _sc
+                and getattr(_sc, "final_response_sent", False)
+                and (_content_delivered or not _has_delivery_flag)
             )
             # response_previewed means the interim_assistant_callback already
             # sent the final text via the adapter (non-streaming path).
             _previewed = bool(response.get("response_previewed"))
-            _content_delivered = bool(
-                _sc and getattr(_sc, "final_content_delivered", False)
-            )
             if not _is_empty_sentinel and (_streamed or _previewed or _content_delivered):
                 logger.info(
                     "Suppressing normal final send for session %s: final delivery already confirmed (streamed=%s previewed=%s content_delivered=%s).",
