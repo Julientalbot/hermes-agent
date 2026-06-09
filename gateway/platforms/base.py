@@ -4185,6 +4185,11 @@ class BasePlatformAdapter(ABC):
 
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)
+                # RC2: capture MEDIA: names that won't deliver before the filter
+                # drops them, so the failure is surfaced (notice sent below)
+                # instead of leaving the model's "here's your file" reply bare.
+                _undeliverable_media = self.undeliverable_media_names(media_files)
+                _media_send_failures: list = []
                 media_files = self.filter_media_delivery_paths(media_files)
 
                 # Extract image URLs and send them as native platform attachments
@@ -4399,8 +4404,11 @@ class BasePlatformAdapter(ABC):
 
                         if not media_result.success:
                             logger.warning("[%s] Failed to send media (%s): %s", self.name, ext, media_result.error)
+                            if not getattr(media_result, "retryable", False):
+                                _media_send_failures.append((Path(media_path).name, media_result.error))
                     except Exception as media_err:
                         logger.warning("[%s] Error sending media: %s", self.name, media_err)
+                        _media_send_failures.append((Path(media_path).name, str(media_err)))
 
                 # Send auto-detected local non-image files as native attachments
                 for file_path in _non_image_local:
@@ -4422,6 +4430,19 @@ class BasePlatformAdapter(ABC):
                             )
                     except Exception as file_err:
                         logger.error("[%s] Error sending local file %s: %s", self.name, file_path, file_err)
+
+                # RC2: surface any MEDIA: attachment that did not reach the user,
+                # so the model's "here's your file" reply isn't silently empty.
+                _notice = self.build_media_failure_notice(_undeliverable_media, _media_send_failures)
+                if _notice:
+                    try:
+                        await self.send(
+                            chat_id=event.source.chat_id,
+                            content=_notice,
+                            metadata=_thread_metadata,
+                        )
+                    except Exception as _notice_err:
+                        logger.warning("[%s] Failed to send media-delivery failure notice: %s", self.name, _notice_err)
 
                 # A3 (#29346): if a non-empty response produced nothing
                 # deliverable, fail loudly rather than dropping it in silence.

@@ -9889,6 +9889,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if response:
                 media_files, response = adapter.extract_media(response)
                 from gateway.platforms.base import BasePlatformAdapter
+                # RC2: capture MEDIA: names that won't deliver before the filter
+                # drops them, so the failure is surfaced (notice below).
+                undeliverable = BasePlatformAdapter.undeliverable_media_names(media_files)
+                send_failures: list = []
                 media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
                 images, text_content = adapter.extract_images(response)
 
@@ -9932,31 +9936,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _ext = os.path.splitext(media_path)[1].lower()
                     try:
                         if _should_send_media_as_audio(source.platform, _ext, _is_voice):
-                            await adapter.send_voice(
+                            _res = await adapter.send_voice(
                                 chat_id=source.chat_id,
                                 audio_path=media_path,
                                 metadata=_thread_metadata,
                             )
                         elif _ext in _VIDEO_EXTS:
-                            await adapter.send_video(
+                            _res = await adapter.send_video(
                                 chat_id=source.chat_id,
                                 video_path=media_path,
                                 metadata=_thread_metadata,
                             )
                         elif _ext in _IMAGE_EXTS:
-                            await adapter.send_image_file(
+                            _res = await adapter.send_image_file(
                                 chat_id=source.chat_id,
                                 image_path=media_path,
                                 metadata=_thread_metadata,
                             )
                         else:
-                            await adapter.send_document(
+                            _res = await adapter.send_document(
                                 chat_id=source.chat_id,
                                 file_path=media_path,
                                 metadata=_thread_metadata,
                             )
+                        if (_res is not None and not getattr(_res, "success", True)
+                                and not getattr(_res, "retryable", False)):
+                            send_failures.append((os.path.basename(media_path), getattr(_res, "error", None)))
                     except Exception:
-                        pass
+                        send_failures.append((os.path.basename(media_path), None))
+
+                # RC2: surface any MEDIA: attachment that did not reach the user.
+                notice = BasePlatformAdapter.build_media_failure_notice(undeliverable, send_failures)
+                if notice:
+                    try:
+                        await adapter.send(
+                            chat_id=source.chat_id,
+                            content=notice,
+                            metadata=_thread_metadata,
+                        )
+                    except Exception as _notice_err:
+                        logger.warning("[%s] Failed to send media-delivery failure notice: %s", adapter.name, _notice_err)
             else:
                 preview = prompt[:60] + ("..." if len(prompt) > 60 else "")
                 await adapter.send(
