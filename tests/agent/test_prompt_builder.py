@@ -810,6 +810,26 @@ class TestPromptBuilderConstants:
         # check that this test is calibrated correctly).
         assert "include MEDIA:" in PLATFORM_HINTS["telegram"]
 
+    def test_messaging_hints_advertise_document_delivery(self):
+        # Regression: the telegram/discord/slack hints used to advertise
+        # MEDIA: only for images/audio/video and never told the agent that
+        # generated documents (.pptx/.html/.pdf/...) are delivered too. The
+        # agent therefore narrated the server file path instead of attaching
+        # the file, so users could not retrieve their generated assets.
+        for platform in ("telegram", "discord", "slack"):
+            hint = PLATFORM_HINTS[platform]
+            assert "downloadable document" in hint.lower(), (
+                f"{platform} hint must advertise document delivery"
+            )
+            assert ".pdf" in hint and ".pptx" in hint, (
+                f"{platform} hint must list document extensions"
+            )
+            # And it must steer the agent away from merely stating the path.
+            assert "never just state the server" in hint.lower(), (
+                f"{platform} hint must tell the agent NOT to narrate the "
+                "server file path instead of delivering the file"
+            )
+
     def test_platform_hints_mattermost(self):
         hint = PLATFORM_HINTS["mattermost"]
         assert "Mattermost" in hint
