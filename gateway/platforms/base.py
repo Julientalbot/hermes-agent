@@ -2810,6 +2810,60 @@ class BasePlatformAdapter(ABC):
                 logger.warning("Skipping unsafe local file path: %s", _log_safe_path(raw))
         return safe_paths
 
+    @staticmethod
+    def undeliverable_media_names(media_files) -> List[str]:
+        """Basenames of MEDIA: paths that won't deliver (validate returns None).
+
+        Lets the gateway tell the user when a file the model claimed to attach
+        was NOT actually delivered (missing on the gateway host, a credential,
+        outside the allowlist in strict mode, …) instead of dropping it
+        silently — which left the model's "here's your file" reply with no
+        attachment and no error.
+        """
+        names: List[str] = []
+        seen = set()
+        for media_path, _is_voice in media_files or []:
+            if validate_media_delivery_path(str(media_path)) is None:
+                base = os.path.basename(str(media_path).strip().strip('`"\''))
+                if base and base not in seen:
+                    seen.add(base)
+                    names.append(base)
+        return names
+
+    @staticmethod
+    def build_media_failure_notice(undeliverable, send_failures=()) -> Optional[str]:
+        """Concise user-facing notice for files that failed to attach, or None.
+
+        ``undeliverable`` = basenames rejected before send (not found / unsafe).
+        ``send_failures`` = (basename, error) tuples that failed at send time.
+        """
+        seen = set()
+        parts: List[str] = []
+        miss: List[str] = []
+        for n in undeliverable or []:
+            if n and n not in seen:
+                seen.add(n)
+                miss.append(n)
+        if miss:
+            parts.append(
+                "couldn't attach " + ", ".join(f"`{n}`" for n in miss)
+                + " (not found on the server or not deliverable)"
+            )
+        sent: List[str] = []
+        for name, _err in send_failures or ():
+            if name and name not in seen:
+                seen.add(name)
+                sent.append(f"`{name}`")
+        if sent:
+            parts.append("failed to send " + ", ".join(sent))
+        if not parts:
+            return None
+        return (
+            "⚠️ The message went through but the file attachment did not — I "
+            + "; ".join(parts)
+            + ". Ask me to retry, or check the file path."
+        )
+
 
     @staticmethod
     def _mask_protected_spans(content: str) -> str:

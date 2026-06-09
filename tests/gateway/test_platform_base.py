@@ -1485,3 +1485,45 @@ class TestMediaDeliveryDiagnosability:
         assert any(r.endswith("cache/documents") for r in roots)
         # Legacy layout still present.
         assert any(r.endswith("image_cache") for r in roots)
+
+
+class TestMediaDeliveryFailureSurfacing:
+    """RC2: undeliverable MEDIA files are reported, not dropped silently."""
+
+    def test_undeliverable_lists_missing_file(self):
+        names = BasePlatformAdapter.undeliverable_media_names(
+            [("/no/such/dir/report.pptx", False)]
+        )
+        assert names == ["report.pptx"]
+
+    def test_undeliverable_skips_existing_fresh_file(self, tmp_path, monkeypatch):
+        # Default env (non-strict, trust-recent on): a freshly-produced,
+        # non-credential file validates, so it is NOT reported.
+        monkeypatch.delenv("HERMES_MEDIA_DELIVERY_STRICT", raising=False)
+        monkeypatch.delenv("HERMES_MEDIA_TRUST_RECENT_FILES", raising=False)
+        f = tmp_path / "deck.pptx"
+        f.write_text("x")
+        assert BasePlatformAdapter.undeliverable_media_names([(str(f), False)]) == []
+
+    def test_undeliverable_dedupes_basenames(self):
+        names = BasePlatformAdapter.undeliverable_media_names(
+            [("/a/report.pptx", False), ("/b/report.pptx", False)]
+        )
+        assert names == ["report.pptx"]
+
+    def test_notice_none_when_nothing_failed(self):
+        assert BasePlatformAdapter.build_media_failure_notice([], []) is None
+
+    def test_notice_reports_undeliverable(self):
+        notice = BasePlatformAdapter.build_media_failure_notice(["report.pptx"], [])
+        assert notice is not None
+        assert "report.pptx" in notice
+        assert "couldn't attach" in notice
+
+    def test_notice_reports_send_failure(self):
+        notice = BasePlatformAdapter.build_media_failure_notice(
+            [], [("page.html", "telegram boom")]
+        )
+        assert notice is not None
+        assert "page.html" in notice
+        assert "failed to send" in notice
