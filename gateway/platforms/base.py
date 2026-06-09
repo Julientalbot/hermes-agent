@@ -2810,6 +2810,60 @@ class BasePlatformAdapter(ABC):
                 logger.warning("Skipping unsafe local file path: %s", _log_safe_path(raw))
         return safe_paths
 
+    @staticmethod
+    def undeliverable_media_names(media_files) -> List[str]:
+        """Basenames of MEDIA: paths that won't deliver (validate returns None).
+
+        Lets the gateway tell the user when a file the model claimed to attach
+        was NOT actually delivered (missing on the gateway host, a credential,
+        outside the allowlist in strict mode, …) instead of dropping it
+        silently — which left the model's "here's your file" reply with no
+        attachment and no error.
+        """
+        names: List[str] = []
+        seen = set()
+        for media_path, _is_voice in media_files or []:
+            if validate_media_delivery_path(str(media_path)) is None:
+                base = os.path.basename(str(media_path).strip().strip('`"\''))
+                if base and base not in seen:
+                    seen.add(base)
+                    names.append(base)
+        return names
+
+    @staticmethod
+    def build_media_failure_notice(undeliverable, send_failures=()) -> Optional[str]:
+        """Concise user-facing notice for files that failed to attach, or None.
+
+        ``undeliverable`` = basenames rejected before send (not found / unsafe).
+        ``send_failures`` = (basename, error) tuples that failed at send time.
+        """
+        seen = set()
+        parts: List[str] = []
+        miss: List[str] = []
+        for n in undeliverable or []:
+            if n and n not in seen:
+                seen.add(n)
+                miss.append(n)
+        if miss:
+            parts.append(
+                "couldn't attach " + ", ".join(f"`{n}`" for n in miss)
+                + " (not found on the server or not deliverable)"
+            )
+        sent: List[str] = []
+        for name, _err in send_failures or ():
+            if name and name not in seen:
+                seen.add(name)
+                sent.append(f"`{name}`")
+        if sent:
+            parts.append("failed to send " + ", ".join(sent))
+        if not parts:
+            return None
+        return (
+            "⚠️ The message went through but the file attachment did not — I "
+            + "; ".join(parts)
+            + ". Ask me to retry, or check the file path."
+        )
+
 
     @staticmethod
     def _mask_protected_spans(content: str) -> str:
@@ -4131,6 +4185,11 @@ class BasePlatformAdapter(ABC):
 
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)
+                # capture MEDIA: names that won't deliver before the filter
+                # drops them, so the failure is surfaced (notice sent below)
+                # instead of leaving the model's "here's your file" reply bare.
+                _undeliverable_media = self.undeliverable_media_names(media_files)
+                _media_send_failures: list = []
                 media_files = self.filter_media_delivery_paths(media_files)
 
                 # Extract image URLs and send them as native platform attachments
@@ -4345,8 +4404,11 @@ class BasePlatformAdapter(ABC):
 
                         if not media_result.success:
                             logger.warning("[%s] Failed to send media (%s): %s", self.name, ext, media_result.error)
+                            if not getattr(media_result, "retryable", False):
+                                _media_send_failures.append((Path(media_path).name, media_result.error))
                     except Exception as media_err:
                         logger.warning("[%s] Error sending media: %s", self.name, media_err)
+                        _media_send_failures.append((Path(media_path).name, str(media_err)))
 
                 # Send auto-detected local non-image files as native attachments
                 for file_path in _non_image_local:
@@ -4368,6 +4430,19 @@ class BasePlatformAdapter(ABC):
                             )
                     except Exception as file_err:
                         logger.error("[%s] Error sending local file %s: %s", self.name, file_path, file_err)
+
+                # surface any MEDIA: attachment that did not reach the user,
+                # so the model's "here's your file" reply isn't silently empty.
+                _notice = self.build_media_failure_notice(_undeliverable_media, _media_send_failures)
+                if _notice:
+                    try:
+                        await self.send(
+                            chat_id=event.source.chat_id,
+                            content=_notice,
+                            metadata=_thread_metadata,
+                        )
+                    except Exception as _notice_err:
+                        logger.warning("[%s] Failed to send media-delivery failure notice: %s", self.name, _notice_err)
 
                 # A3 (#29346): if a non-empty response produced nothing
                 # deliverable, fail loudly rather than dropping it in silence.
