@@ -1218,11 +1218,19 @@ _MEDIA_EXT_ALTERNATION = "|".join(
 # consumer so both behave identically.
 # Path anchors: ``~/`` (Unix home-relative), ``/`` (Unix absolute),
 # ``X:\\`` or ``X:/`` (Windows drive-letter absolute — #34632).
+# Emphasis tolerance: models routinely wrap the tag in Markdown emphasis
+# (``**MEDIA:/x.pdf**``, ``*MEDIA:/x.pdf*``, ``_MEDIA:/x.pdf_``) when presenting
+# a file. The old single-quote anchor and the closing lookahead (lacking
+# ``*``/``_``) failed to match, so the file was silently never delivered and the
+# literal ``MEDIA:`` text leaked into the chat. Tolerate a short run of
+# emphasis/quote markers on both sides. Code/inline-code/blockquote contexts are
+# still neutralised by ``_mask_protected_spans`` (#35695). Mirrors upstream PR
+# fix(gateway): deliver MEDIA: tags wrapped in Markdown emphasis.
 MEDIA_TAG_CLEANUP_RE = re.compile(
-    r'''[`"']?MEDIA:\s*'''
+    r'''[`"'*_]{0,3}MEDIA:\s*'''
     r'''(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|'''
     r'''(?:~/|/|[A-Za-z]:[/\\])\S+(?:[^\S\n]+\S+)*?\.(?:''' + _MEDIA_EXT_ALTERNATION + r'''))'''
-    r'''(?=[\s`"',;:)\]}]|$)[`"']?''',
+    r'''(?=[\s`"'*_,;:)\]}]|$)[`"'*_]{0,3}''',
     re.IGNORECASE,
 )
 
