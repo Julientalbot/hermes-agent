@@ -692,14 +692,23 @@ _AUTO_APPEND_MEDIA_TOOL_NAMES = {
     "text_to_speech",
     "text_to_speech_tool",
     "image_generate",
+    "video_generate",
 }
 
-# Tools in this set return their deliverable artifact as a JSON payload with a
-# local-file path field rather than a literal ``MEDIA:`` tag (e.g. image_generate
-# returns ``{"success": true, "image": "/abs/path.png"}``). The auto-append path
-# extracts the path from these fields so delivery is deterministic and does not
-# depend on the model restating the path in its final reply.
-_JSON_MEDIA_TOOL_PATH_FIELDS = ("host_image", "image", "agent_visible_image")
+# Producer tools that return their deliverable artifact as a JSON payload with a
+# local-file path field rather than a literal ``MEDIA:`` tag. Each tool maps to
+# the result field(s) to probe, in priority order (e.g. image_generate returns
+# ``{"success": true, "image": "/abs/path.png"}``; video_generate returns
+# ``{"success": true, "video": "/abs/path.mp4"}``). The auto-append path reads
+# the path from these fields so delivery is deterministic and does NOT depend on
+# the model restating a correctly-formatted ``MEDIA:`` tag in its final reply.
+# Safety: only the success-gated result of an allowlisted producer tool is read,
+# and remote URLs / non-deliverable extensions are rejected by ``_TOOL_MEDIA_RE``
+# — so an internal/temp file a generic tool happened to write is never delivered.
+_JSON_MEDIA_TOOL_PATH_FIELDS: Dict[str, tuple[str, ...]] = {
+    "image_generate": ("host_image", "image", "agent_visible_image"),
+    "video_generate": ("video",),
+}
 
 
 # Extension-anchored MEDIA: matcher for tool results. Mirrors the dispatch-site
@@ -725,9 +734,12 @@ def _collect_auto_append_media_tags(
     Two layered guards keep stale/example MEDIA: strings out of the reply:
 
     1. Producer-tool allowlist: only tools that intentionally emit deliverable
-       artifacts (TTS) are eligible. Documentation, logs, and search results can
-       contain example strings such as MEDIA:/absolute/path/to/file, which must
-       never be delivered as attachments. (Fixes the original report behind #16721.)
+       artifacts (image_generate, video_generate, TTS) are eligible. Generic
+       file-producing tools (write_file, terminal, ...) are deliberately NOT in
+       the allowlist, so an internal/temp file they write is never auto-delivered.
+       Documentation, logs, and search results can also contain example strings
+       such as MEDIA:/absolute/path/to/file, which must never be delivered as
+       attachments. (Fixes the original report behind #16721.)
     2. Current-turn isolation: only messages produced this turn are scanned, so a
        tool result from an earlier turn (still present in the full message list)
        cannot leak onto a later text-only reply (#34608).
@@ -767,16 +779,19 @@ def _collect_auto_append_media_tags(
             continue
         content = str(msg.get("content") or "")
         tool_name = tool_name_by_call_id.get(call_id)
-        # JSON-payload tools (image_generate) return a local-file path in a
-        # known field rather than a MEDIA: tag. Extract it so delivery is
-        # deterministic even when the model omits the path from its reply.
-        if tool_name == "image_generate" and "MEDIA:" not in content:
+        # Producer tools that return their artifact path in a structured JSON
+        # field (image_generate, video_generate) deliver deterministically: read
+        # the path from the result rather than relying on the model to restate a
+        # correctly-formatted MEDIA: tag in its reply. TTS keeps the MEDIA:-scan
+        # path below, which also carries the [[audio_as_voice]] directive.
+        json_fields = _JSON_MEDIA_TOOL_PATH_FIELDS.get(tool_name)
+        if json_fields and "MEDIA:" not in content:
             try:
                 payload = json.loads(content)
             except Exception:
                 payload = None
             if isinstance(payload, dict) and payload.get("success"):
-                for field in _JSON_MEDIA_TOOL_PATH_FIELDS:
+                for field in json_fields:
                     path = payload.get(field)
                     if (isinstance(path, str)
                             and _TOOL_MEDIA_RE.fullmatch(f"MEDIA:{path}")
