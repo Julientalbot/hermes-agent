@@ -760,6 +760,7 @@ _AUTO_APPEND_MEDIA_TOOL_NAMES = {
     "text_to_speech",
     "text_to_speech_tool",
     "image_generate",
+    "video_generate",
 }
 
 # ---- helpers: detect interrupted tool tails & auto-continue noise ----------
@@ -860,7 +861,10 @@ def _strip_auto_continue_noise(content: Any) -> Any:
 # returns ``{"success": true, "image": "/abs/path.png"}``). The auto-append path
 # extracts the path from these fields so delivery is deterministic and does not
 # depend on the model restating the path in its final reply.
-_JSON_MEDIA_TOOL_PATH_FIELDS = ("host_image", "image", "agent_visible_image")
+_JSON_MEDIA_TOOL_PATH_FIELDS: Dict[str, tuple[str, ...]] = {
+    "image_generate": ("host_image", "image", "agent_visible_image"),
+    "video_generate": ("video",),
+}
 
 
 # Extension-anchored MEDIA: matcher for tool results. Mirrors the dispatch-site
@@ -928,16 +932,17 @@ def _collect_auto_append_media_tags(
             continue
         content = str(msg.get("content") or "")
         tool_name = tool_name_by_call_id.get(call_id)
-        # JSON-payload tools (image_generate) return a local-file path in a
+        # JSON-payload tools return a local-file path in a
         # known field rather than a MEDIA: tag. Extract it so delivery is
         # deterministic even when the model omits the path from its reply.
-        if tool_name == "image_generate" and "MEDIA:" not in content:
+        json_fields = _JSON_MEDIA_TOOL_PATH_FIELDS.get(tool_name)
+        if json_fields and "MEDIA:" not in content:
             try:
                 payload = json.loads(content)
             except Exception:
                 payload = None
             if isinstance(payload, dict) and payload.get("success"):
-                for field in _JSON_MEDIA_TOOL_PATH_FIELDS:
+                for field in json_fields:
                     path = payload.get(field)
                     if (isinstance(path, str)
                             and _TOOL_MEDIA_RE.fullmatch(f"MEDIA:{path}")
@@ -10230,10 +10235,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # send_multiple_images (Telegram sendPhoto recompresses to ~1280px).
             force_document_attachments = "[[as_document]]" in response
 
-            from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
+            from gateway.platforms.base import (
+                BasePlatformAdapter,
+                _media_delivery_failure_notice,
+                should_send_media_as_audio,
+                validate_media_delivery_path,
+            )
 
-            media_files, cleaned = adapter.extract_media(response)
-            media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+            raw_media_files, cleaned = adapter.extract_media(response)
+            media_files = []
+            media_delivery_failed_paths = []
+            for media_path, is_voice in raw_media_files:
+                validated_path = validate_media_delivery_path(media_path)
+                if validated_path:
+                    media_files.append((validated_path, is_voice))
+                else:
+                    media_delivery_failed_paths.append(media_path)
             # Chain the cleaned text through each extractor (extract_media →
             # extract_images → extract_local_files) so MEDIA: tags and image URLs
             # are removed before the bare-path auto-detect runs. Previously the
@@ -10276,55 +10293,76 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if image_paths:
                 try:
                     images = [(f"file://{_quote(p)}", "") for p in image_paths]
-                    await adapter.send_multiple_images(
+                    image_result = await adapter.send_multiple_images(
                         chat_id=event.source.chat_id,
                         images=images,
                         metadata=_thread_meta,
                     )
+                    if image_result is not None and not getattr(image_result, "success", False):
+                        media_delivery_failed_paths.extend(image_paths)
                 except Exception as e:
+                    media_delivery_failed_paths.extend(image_paths)
                     logger.warning("[%s] Post-stream image batch delivery failed: %s", adapter.name, e)
 
             for media_path, is_voice in non_image_media:
                 try:
                     ext = Path(media_path).suffix.lower()
                     if should_send_media_as_audio(event.source.platform, ext, is_voice=is_voice):
-                        await adapter.send_voice(
+                        media_result = await adapter.send_voice(
                             chat_id=event.source.chat_id,
                             audio_path=media_path,
                             metadata=_thread_meta,
                         )
                     elif ext in _VIDEO_EXTS:
-                        await adapter.send_video(
+                        media_result = await adapter.send_video(
                             chat_id=event.source.chat_id,
                             video_path=media_path,
                             metadata=_thread_meta,
                         )
                     else:
-                        await adapter.send_document(
+                        media_result = await adapter.send_document(
                             chat_id=event.source.chat_id,
                             file_path=media_path,
                             metadata=_thread_meta,
                         )
+                    if not getattr(media_result, "success", False):
+                        media_delivery_failed_paths.append(media_path)
                 except Exception as e:
+                    media_delivery_failed_paths.append(media_path)
                     logger.warning("[%s] Post-stream media delivery failed: %s", adapter.name, e)
 
             for file_path in non_image_local:
                 try:
                     ext = Path(file_path).suffix.lower()
                     if ext in _VIDEO_EXTS:
-                        await adapter.send_video(
+                        file_result = await adapter.send_video(
                             chat_id=event.source.chat_id,
                             video_path=file_path,
                             metadata=_thread_meta,
                         )
                     else:
-                        await adapter.send_document(
+                        file_result = await adapter.send_document(
                             chat_id=event.source.chat_id,
                             file_path=file_path,
                             metadata=_thread_meta,
                         )
+                    if not getattr(file_result, "success", False):
+                        media_delivery_failed_paths.append(file_path)
                 except Exception as e:
+                    media_delivery_failed_paths.append(file_path)
                     logger.warning("[%s] Post-stream file delivery failed: %s", adapter.name, e)
+
+            if media_delivery_failed_paths and hasattr(adapter, "send"):
+                _notice_meta = dict(_thread_meta) if _thread_meta is not None else {}
+                _notice_meta["notify"] = True
+                try:
+                    await adapter.send(
+                        chat_id=event.source.chat_id,
+                        content=_media_delivery_failure_notice(media_delivery_failed_paths),
+                        metadata=_notice_meta,
+                    )
+                except Exception as e:
+                    logger.warning("[%s] Post-stream media failure notice failed: %s", adapter.name, e)
 
         except Exception as e:
             logger.warning("Post-stream media extraction failed: %s", e)
@@ -15889,6 +15927,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if isinstance(response, dict) and not response.get("failed"):
             _final = response.get("final_response") or ""
             _is_empty_sentinel = not _final or _final == "(empty)"
+            _has_media_delivery = "MEDIA:" in _final
             _streamed = bool(
                 _sc and getattr(_sc, "final_response_sent", False)
             )
@@ -15902,7 +15941,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # after streaming finished — when the response was transformed, always
             # send the final version so the appended content reaches the client.
             _transformed = bool(response.get("response_transformed"))
-            if not _is_empty_sentinel and not _transformed and (_streamed or _previewed or _content_delivered):
+            if not _is_empty_sentinel and _has_media_delivery and (_streamed or _previewed or _content_delivered):
+                if _sc and hasattr(_sc, "discard_previews_for_external_final"):
+                    try:
+                        await _sc.discard_previews_for_external_final()
+                    except Exception as _discard_err:
+                        logger.debug(
+                            "Failed to discard streamed media preview for session %s: %s",
+                            session_key or "?",
+                            _discard_err,
+                        )
+                logger.info(
+                    "Not suppressing normal final send for session %s: media delivery requires adapter dispatch.",
+                    session_key or "?",
+                )
+            elif not _is_empty_sentinel and not _transformed and (_streamed or _previewed or _content_delivered):
                 logger.info(
                     "Suppressing normal final send for session %s: final delivery already confirmed (streamed=%s previewed=%s content_delivered=%s).",
                     session_key or "?",

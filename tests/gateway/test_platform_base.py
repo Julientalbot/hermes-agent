@@ -317,6 +317,15 @@ class TestExtractMedia:
         ]
         assert cleaned == ""
 
+    def test_media_tag_strips_markdown_emphasis_wrappers(self):
+        content = "**MEDIA:/path/to/report.docx**\n_MEDIA:/path/to/file.png_"
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+        assert media == [
+            ("/path/to/report.docx", False),
+            ("/path/to/file.png", False),
+        ]
+        assert cleaned == ""
+
     def test_media_tag_supports_quoted_paths_with_spaces(self):
         content = "Here\nMEDIA: '/tmp/my image.png'\nAfter"
         media, cleaned = BasePlatformAdapter.extract_media(content)

@@ -41,6 +41,17 @@ class TestCleanForDisplay:
             result = GatewayStreamConsumer._clean_for_display(text)
             assert "MEDIA:" not in result, f"Failed for wrapper: {wrapper}"
 
+    def test_media_tag_with_markdown_emphasis(self):
+        """MEDIA: tags wrapped in Markdown emphasis are removed."""
+        for wrapper in [
+            "**MEDIA:/path/file.png**",
+            "*MEDIA:/path/file.png*",
+            "_MEDIA:/path/file.png_",
+        ]:
+            text = f"Result: {wrapper}"
+            result = GatewayStreamConsumer._clean_for_display(text)
+            assert "MEDIA:" not in result, f"Failed for wrapper: {wrapper}"
+
     def test_audio_as_voice_stripped(self):
         """[[audio_as_voice]] directive is removed."""
         text = "[[audio_as_voice]]\nMEDIA:/tmp/voice.ogg"
@@ -1944,4 +1955,3 @@ class TestUtf16OverflowDetection:
         # auto-attr mock. Verified indirectly by all the other tests in
         # this file passing — they all use MagicMock adapters.
         assert consumer is not None
-

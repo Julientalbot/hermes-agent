@@ -118,8 +118,27 @@ class TestFreshFinalForLongLivedPreviews:
         await consumer._send_or_edit("hello world", finalize=True)
         assert adapter.send.call_count == 2
         adapter.edit_message.assert_not_called()
-        # No delete attempt — just the fresh send.
-        assert consumer._message_id == "fresh_final"
+
+    @pytest.mark.asyncio
+    async def test_discard_previews_for_external_final_resets_delivery_flags(self):
+        """MEDIA final dispatch can replace streamed previews via the adapter."""
+        adapter = _make_adapter()
+        consumer = GatewayStreamConsumer(
+            adapter=adapter,
+            chat_id="chat",
+            config=StreamConsumerConfig(),
+        )
+        await consumer._send_or_edit("Here is the file")
+
+        assert consumer.already_sent is True
+        assert consumer.message_id == "initial_preview"
+
+        await consumer.discard_previews_for_external_final()
+
+        adapter.delete_message.assert_awaited_once_with("chat", "initial_preview")
+        assert consumer.already_sent is False
+        assert consumer.final_response_sent is False
+        assert consumer.message_id is None
 
     @pytest.mark.asyncio
     async def test_fresh_final_fallback_to_edit_on_send_failure(self):

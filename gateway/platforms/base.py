@@ -1114,6 +1114,40 @@ def _log_safe_path(path: str) -> str:
     return _LOG_UNSAFE_CHARS.sub("?", str(path))[:200]
 
 
+def _media_delivery_user_label(path: str) -> str:
+    """Return a user-facing file label without exposing host directories."""
+    try:
+        label = Path(str(path).strip().strip("`\"'")).name
+    except Exception:
+        label = ""
+    label = label.strip() or "file"
+    return _LOG_UNSAFE_CHARS.sub("?", label)[:120]
+
+
+def _media_delivery_failure_notice(paths) -> str:
+    """Build a clear attachment failure notice without leaking local paths."""
+    labels = []
+    seen = set()
+    for raw in paths or []:
+        label = _media_delivery_user_label(str(raw))
+        if label not in seen:
+            seen.add(label)
+            labels.append(label)
+    shown = ", ".join(labels[:3])
+    if len(labels) > 3:
+        shown += f", +{len(labels) - 3} more"
+    if shown:
+        return (
+            "I couldn't attach the requested file "
+            f"({shown}). It was not sent as a downloadable attachment. "
+            "Please regenerate it or try again."
+        )
+    return (
+        "I couldn't attach the requested file. It was not sent as a "
+        "downloadable attachment. Please regenerate it or try again."
+    )
+
+
 SUPPORTED_DOCUMENT_TYPES = {
     ".pdf": "application/pdf",
     ".md": "text/markdown",
@@ -1222,11 +1256,13 @@ _MEDIA_EXT_ALTERNATION = "|".join(
 # consumer so both behave identically.
 # Path anchors: ``~/`` (Unix home-relative), ``/`` (Unix absolute),
 # ``X:\\`` or ``X:/`` (Windows drive-letter absolute — #34632).
+# Models sometimes wrap delivery tags in Markdown emphasis. Treat those
+# delimiters like quotes/backticks so the wrapper is stripped with the tag.
 MEDIA_TAG_CLEANUP_RE = re.compile(
-    r'''[`"']?MEDIA:\s*'''
+    r'''[`"'*_]{0,3}MEDIA:\s*'''
     r'''(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|'''
     r'''(?:~/|/|[A-Za-z]:[/\\])\S+(?:[^\S\n]+\S+)*?\.(?:''' + _MEDIA_EXT_ALTERNATION + r'''))'''
-    r'''(?=[\s`"',;:)\]}]|$)[`"']?''',
+    r'''(?=[\s`"'*_,;:)\]}]|$)[`"'*_]{0,3}''',
     re.IGNORECASE,
 )
 
@@ -4225,9 +4261,18 @@ class BasePlatformAdapter(ABC):
                 # Pre-extract snapshot for the #29346 recovery/invariant below.
                 _response_pre_extract = response
 
-                # Extract MEDIA:<path> tags (from TTS tool) before other processing
-                media_files, response = self.extract_media(response)
-                media_files = self.filter_media_delivery_paths(media_files)
+                # Extract MEDIA:<path> tags before other processing. Keep
+                # rejected tags as explicit delivery failures so a model can
+                # never replace a downloadable attachment with a host path.
+                raw_media_files, response = self.extract_media(response)
+                media_files = []
+                media_delivery_failed_paths = []
+                for media_path, is_voice in raw_media_files:
+                    validated_path = validate_media_delivery_path(media_path)
+                    if validated_path:
+                        media_files.append((validated_path, is_voice))
+                    else:
+                        media_delivery_failed_paths.append(media_path)
 
                 # Extract image URLs and send them as native platform attachments
                 images, text_content = self.extract_images(response)
@@ -4254,7 +4299,9 @@ class BasePlatformAdapter(ABC):
                 # empty text with no attachment, and the `if text_content` guard
                 # below then drops it silently. Recover on every platform (#33842
                 # was Discord-only); the guard avoids duplicating an attachment.
-                if not (text_content or images or local_files or media_files):
+                _has_attachment_work = bool(images or local_files or media_files or raw_media_files)
+
+                if not (text_content or images or local_files or media_files or raw_media_files):
                     # Recover from the post-extract_media `response`, not the raw
                     # snapshot: extract_media already stripped MEDIA (incl. spaced
                     # paths) with its full grammar, so no fragment can leak.
@@ -4318,27 +4365,21 @@ class BasePlatformAdapter(ABC):
                         except OSError:
                             pass
 
-                # Send the text portion
-                if text_content and not _tts_caption_delivered:
+                async def _send_text_content() -> None:
                     logger.info("[%s] Sending response (%d chars) to %s", self.name, len(text_content), event.source.chat_id)
                     _reply_anchor = _reply_anchor_for_event(event)
                     # Mark final response messages for notification delivery.
-                    # Platform adapters that support per-message notification
-                    # control (e.g. Telegram's disable_notification) use this
-                    # flag to override silent-mode and ensure the final
-                    # response triggers a push notification.
-                    # Clone to avoid mutating the metadata shared with the
-                    # typing-indicator task (which must remain unmarked).
+                    # Clone to avoid mutating metadata shared with typing/media sends.
                     if _thread_metadata is not None:
-                        _thread_metadata = dict(_thread_metadata)
-                        _thread_metadata["notify"] = True
+                        _send_metadata = dict(_thread_metadata)
+                        _send_metadata["notify"] = True
                     else:
-                        _thread_metadata = {"notify": True}
+                        _send_metadata = {"notify": True}
                     result = await self._send_with_retry(
                         chat_id=event.source.chat_id,
                         content=text_content,
                         reply_to=_reply_anchor,
-                        metadata=_thread_metadata,
+                        metadata=_send_metadata,
                     )
                     _record_delivery(result)
 
@@ -4348,14 +4389,18 @@ class BasePlatformAdapter(ABC):
                     if (
                         _ephemeral_ttl
                         and _ephemeral_ttl > 0
-                        and result.success
-                        and result.message_id
+                        and getattr(result, "success", False)
+                        and getattr(result, "message_id", None)
                     ):
                         self._schedule_ephemeral_delete(
                             chat_id=event.source.chat_id,
                             message_id=result.message_id,
                             ttl_seconds=_ephemeral_ttl,
                         )
+
+                # Send the text portion
+                if text_content and not _tts_caption_delivered and not _has_attachment_work:
+                    await _send_text_content()
 
                 # Human-like pacing delay between text and media
                 human_delay = self._get_human_delay()
@@ -4364,13 +4409,17 @@ class BasePlatformAdapter(ABC):
                 if images:
                     logger.info("[%s] Extracted %d image(s) to send as attachments", self.name, len(images))
                     try:
-                        await self.send_multiple_images(
+                        image_result = await self.send_multiple_images(
                             chat_id=event.source.chat_id,
                             images=images,
                             metadata=_thread_metadata,
                             human_delay=human_delay,
                         )
+                        _record_delivery(image_result)
+                        if image_result is not None and not getattr(image_result, "success", False):
+                            media_delivery_failed_paths.extend(url for url, _ in images)
                     except Exception as batch_err:
+                        media_delivery_failed_paths.extend(url for url, _ in images)
                         logger.warning("[%s] Error batching images: %s", self.name, batch_err, exc_info=True)
 
 
@@ -4406,13 +4455,17 @@ class BasePlatformAdapter(ABC):
                 if _image_paths:
                     try:
                         _batch = [(f"file://{_quote(p)}", "") for p in _image_paths]
-                        await self.send_multiple_images(
+                        image_result = await self.send_multiple_images(
                             chat_id=event.source.chat_id,
                             images=_batch,
                             metadata=_thread_metadata,
                             human_delay=human_delay,
                         )
+                        _record_delivery(image_result)
+                        if image_result is not None and not getattr(image_result, "success", False):
+                            media_delivery_failed_paths.extend(_image_paths)
                     except Exception as batch_err:
+                        media_delivery_failed_paths.extend(_image_paths)
                         logger.warning("[%s] Error batching images: %s", self.name, batch_err, exc_info=True)
 
                 for media_path, is_voice in _non_image_media:
@@ -4439,9 +4492,12 @@ class BasePlatformAdapter(ABC):
                                 metadata=_thread_metadata,
                             )
 
-                        if not media_result.success:
+                        _record_delivery(media_result)
+                        if not getattr(media_result, "success", False):
+                            media_delivery_failed_paths.append(media_path)
                             logger.warning("[%s] Failed to send media (%s): %s", self.name, ext, media_result.error)
                     except Exception as media_err:
+                        media_delivery_failed_paths.append(media_path)
                         logger.warning("[%s] Error sending media: %s", self.name, media_err)
 
                 # Send auto-detected local non-image files as native attachments
@@ -4451,19 +4507,36 @@ class BasePlatformAdapter(ABC):
                     try:
                         ext = Path(file_path).suffix.lower()
                         if ext in _VIDEO_EXTS:
-                            await self.send_video(
+                            file_result = await self.send_video(
                                 chat_id=event.source.chat_id,
                                 video_path=file_path,
                                 metadata=_thread_metadata,
                             )
                         else:
-                            await self.send_document(
+                            file_result = await self.send_document(
                                 chat_id=event.source.chat_id,
                                 file_path=file_path,
                                 metadata=_thread_metadata,
                             )
+                        _record_delivery(file_result)
+                        if not getattr(file_result, "success", False):
+                            media_delivery_failed_paths.append(file_path)
                     except Exception as file_err:
+                        media_delivery_failed_paths.append(file_path)
                         logger.error("[%s] Error sending local file %s: %s", self.name, file_path, file_err)
+
+                if media_delivery_failed_paths:
+                    _notice_metadata = dict(_thread_metadata) if _thread_metadata is not None else {}
+                    _notice_metadata["notify"] = True
+                    notice_result = await self._send_with_retry(
+                        chat_id=event.source.chat_id,
+                        content=_media_delivery_failure_notice(media_delivery_failed_paths),
+                        reply_to=_reply_anchor_for_event(event),
+                        metadata=_notice_metadata,
+                    )
+                    _record_delivery(notice_result)
+                elif text_content and not _tts_caption_delivered and _has_attachment_work:
+                    await _send_text_content()
 
                 # A3 (#29346): if a non-empty response produced nothing
                 # deliverable, fail loudly rather than dropping it in silence.

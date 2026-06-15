@@ -185,6 +185,30 @@ caption
         assert tags == ["MEDIA:/tmp/gen/cat.png"]
         assert voice is False
 
+    def test_gateway_auto_append_video_generate_json_path(self):
+        """video_generate returns a local path in JSON and should auto-append."""
+        from gateway.run import _collect_auto_append_media_tags
+
+        messages = [
+            {"role": "user", "content": "Make me a clip"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_video", "function": {"name": "video_generate"}}
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_video",
+                "content": '{"success": true, "video": "/tmp/gen/clip.mp4"}',
+            },
+            {"role": "assistant", "content": "Here's your clip."},
+        ]
+
+        tags, voice = _collect_auto_append_media_tags(messages, history_offset=0)
+        assert tags == ["MEDIA:/tmp/gen/clip.mp4"]
+        assert voice is False
+
     def test_gateway_auto_append_image_generate_prefers_host_path(self):
         """When host and sandbox paths differ, the host-deliverable path wins."""
         from gateway.run import _collect_auto_append_media_tags

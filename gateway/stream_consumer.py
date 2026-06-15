@@ -1179,6 +1179,36 @@ class GatewayStreamConsumer:
             for mid in (raw.get("message_ids") or ()):
                 self._track_preview_id(mid)
 
+    async def discard_previews_for_external_final(self) -> None:
+        """Best-effort remove streamed previews before gateway final dispatch.
+
+        MEDIA-bearing final responses need the platform adapter's normal
+        dispatch path so file delivery can happen before any file-delivered
+        claim is sent. If streaming already showed a preview, delete it where
+        supported and reset delivery flags so the caller sends the canonical
+        final response instead of treating the preview as complete.
+        """
+        stale_ids = set(self._preview_message_ids)
+        if self._message_id and self._message_id != "__no_edit__":
+            stale_ids.add(str(self._message_id))
+        delete_fn = getattr(self.adapter, "delete_message", None)
+        if delete_fn is not None:
+            for stale_id in stale_ids:
+                try:
+                    await delete_fn(self.chat_id, stale_id)
+                except Exception as e:
+                    logger.debug(
+                        "External-final preview cleanup failed (%s): %s",
+                        stale_id, e,
+                    )
+        self._preview_message_ids = set()
+        self._message_id = None
+        self._message_created_ts = None
+        self._last_sent_text = ""
+        self._already_sent = False
+        self._final_response_sent = False
+        self._final_content_delivered = False
+
     def _adapter_prefers_fresh_final(self, text: str) -> bool:
         """Return True when the adapter would rather finalize a streamed reply
         by sending a fresh message and deleting the preview than by editing the

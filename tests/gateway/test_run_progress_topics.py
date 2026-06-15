@@ -621,6 +621,23 @@ class StreamingRefineAgent:
         }
 
 
+class StreamingMediaAgent:
+    def __init__(self, **kwargs):
+        self.stream_delta_callback = kwargs.get("stream_delta_callback")
+        self.tools = []
+
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        if self.stream_delta_callback:
+            self.stream_delta_callback("Here is the file:")
+        time.sleep(0.1)
+        return {
+            "final_response": "Here is the file:\nMEDIA:/tmp/report.docx",
+            "response_previewed": True,
+            "messages": [],
+            "api_calls": 1,
+        }
+
+
 class QueuedCommentaryAgent:
     calls = 0
 
@@ -941,6 +958,25 @@ async def test_run_agent_matrix_streaming_omits_cursor(monkeypatch, tmp_path):
     assert all_text, "expected streamed Matrix content to be sent or edited"
     assert all("▉" not in text for text in all_text)
     assert any("Continuing to refine:" in text for text in all_text)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_media_final_forces_adapter_dispatch_after_stream_preview(monkeypatch, tmp_path):
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        StreamingMediaAgent,
+        session_id="sess-streaming-media",
+        config_data={
+            "display": {"tool_progress": "off", "interim_assistant_messages": False},
+            "streaming": {"enabled": True, "edit_interval": 0.01, "buffer_threshold": 1},
+        },
+        adapter_cls=MetadataEditProgressCaptureAdapter,
+    )
+
+    assert result["final_response"] == "Here is the file:\nMEDIA:/tmp/report.docx"
+    assert result.get("already_sent") is not True
+    assert adapter.sent or adapter.edits
 
 
 class TransformedStreamAgent:
