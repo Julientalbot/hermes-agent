@@ -154,6 +154,58 @@ def test_moa_slots_routed_through_resolve_runtime_provider(monkeypatch):
     assert rt["api_key"] == "key-for-minimax"
 
 
+def test_moa_slot_runtime_omits_base_url_without_api_key(monkeypatch):
+    """Provider/OAuth slots must not become keyless custom endpoints.
+
+    resolve_runtime_provider may know the provider's base URL without returning
+    an inline API key (OAuth and credential-pool providers resolve credentials
+    later). Passing that base_url through to call_llm would force provider
+    "custom" and bypass the provider's auth path.
+    """
+    from agent import moa_loop
+
+    def fake_resolve(*, requested, target_model=None):
+        return {
+            "provider": requested,
+            "api_mode": "chat_completions",
+            "base_url": f"https://{requested}.example/v1",
+            "api_key": "",
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider", fake_resolve
+    )
+
+    rt = moa_loop._slot_runtime({"provider": "xai-oauth", "model": "grok-4.3"})
+
+    assert rt == {"provider": "xai-oauth", "model": "grok-4.3"}
+
+
+def test_moa_slot_runtime_keeps_keyless_custom_base_url(monkeypatch):
+    """Local/custom endpoints may intentionally have no API key."""
+    from agent import moa_loop
+
+    def fake_resolve(*, requested, target_model=None):
+        return {
+            "provider": requested,
+            "api_mode": "chat_completions",
+            "base_url": "http://127.0.0.1:8000/v1",
+            "api_key": "",
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider", fake_resolve
+    )
+
+    rt = moa_loop._slot_runtime({"provider": "custom", "model": "local-model"})
+
+    assert rt == {
+        "provider": "custom",
+        "model": "local-model",
+        "base_url": "http://127.0.0.1:8000/v1",
+    }
+
+
 def test_moa_slot_runtime_falls_back_on_resolution_error(monkeypatch):
     """A slot whose provider can't be resolved still attempts the call with the
     bare provider/model rather than aborting the whole MoA turn."""
@@ -332,4 +384,3 @@ def test_references_run_in_parallel(monkeypatch):
     assert "recursively reference MoA" in out[1][1]
     assert out[2][1].startswith("[failed:")
     assert out[0][1] == "resp-p1"
-

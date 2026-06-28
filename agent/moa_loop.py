@@ -54,14 +54,19 @@ def _slot_runtime(slot: dict[str, str]) -> dict[str, Any]:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
         rt = resolve_runtime_provider(requested=provider, target_model=model)
-        # Pass the resolved endpoint through so call_llm builds the request for
-        # the provider's actual API surface instead of auto-detecting. base_url
-        # routes call_llm to the right adapter (incl. anthropic_messages mode);
-        # api_key is the resolved credential for that provider.
-        if rt.get("base_url"):
-            out["base_url"] = rt["base_url"]
-        if rt.get("api_key"):
-            out["api_key"] = rt["api_key"]
+        # Pass endpoint overrides only when we also have the credential that
+        # belongs to that endpoint. call_llm treats a bare base_url as a
+        # custom endpoint, which would bypass provider auth for OAuth/pool
+        # providers such as xai-oauth and OpenRouter. Custom/local endpoints
+        # may intentionally be keyless, so keep their base_url.
+        api_key = rt.get("api_key")
+        base_url = rt.get("base_url")
+        if api_key:
+            if base_url:
+                out["base_url"] = base_url
+            out["api_key"] = api_key
+        elif provider.lower() in {"custom", "local"} and base_url:
+            out["base_url"] = base_url
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("MoA slot runtime resolution failed for %s: %s", _slot_label(slot), exc)
     return out
