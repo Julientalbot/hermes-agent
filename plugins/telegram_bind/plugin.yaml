@@ -1,0 +1,6 @@
+name: telegram-bind
+version: 1.0.0
+description: "Auto-approve Telegram /start deep-link payloads against pre-issued bind codes."
+author: "Ergonomia"
+hooks:
+  - pre_gateway_dispatch
