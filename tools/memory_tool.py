@@ -631,6 +631,21 @@ def memory_tool(
         result = store.replace(target, old_text, content)
 
     elif action == "remove":
+        # Hard gate for commercial dogfood / authority fail-closed (AaaS).
+        # Skill text alone was not enough: model deleted entries without owner OK.
+        if os.environ.get("HERMES_MEMORY_DENY_REMOVE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return tool_error(
+                "Memory remove is disabled on this instance. "
+                "Do not delete entries to free space. Keep the new fact in-session, "
+                "announce PERSISTANCE MÉMOIRE : HOLD, and ask the owner how to arbitrate. "
+                "Never claim a deletion was performed.",
+                success=False,
+            )
         if not old_text:
             return tool_error("old_text is required for 'remove' action.", success=False)
         result = store.remove(target, old_text)
