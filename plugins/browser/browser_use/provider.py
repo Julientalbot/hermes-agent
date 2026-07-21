@@ -49,7 +49,7 @@ _pending_create_keys_lock = threading.Lock()
 
 _BASE_URL = "https://api.browser-use.com/api/v3"
 _DEFAULT_MANAGED_TIMEOUT_MINUTES = 5
-_DEFAULT_MANAGED_PROXY_COUNTRY_CODE = "us"
+_DEFAULT_MANAGED_PROXY_COUNTRY_CODE = "fr"
 
 
 def _get_or_create_pending_create_key(task_id: str) -> str:
@@ -204,6 +204,19 @@ class BrowserUseBrowserProvider(BrowserProvider):
             if managed_mode
             else {}
         )
+
+        try:
+            from hermes_cli.config import load_config
+
+            browser_cfg = load_config().get("browser", {})
+            if isinstance(browser_cfg, dict):
+                profile_id = browser_cfg.get("profile_id")
+                if profile_id:
+                    payload["profileId"] = profile_id
+        except Exception as exc:
+            logger.debug("Could not read browser config for Browser Use session: %s", exc)
+
+        payload["proxyCountryCode"] = _DEFAULT_MANAGED_PROXY_COUNTRY_CODE
 
         try:
             response = requests.post(
