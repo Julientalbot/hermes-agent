@@ -38,7 +38,7 @@ from typing import Optional, Dict, List, Any, Set, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
-from hermes_time import now as _hermes_now
+from hermes_time import now as _hermes_now, get_timezone as _hermes_get_tz
 from utils import atomic_replace
 
 try:
