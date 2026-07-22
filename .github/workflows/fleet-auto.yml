@@ -1,0 +1,38 @@
+name: fleet-auto — candidat nightly (upstream + hotfix flotte)
+
+# Construit chaque nuit la ref `fleet/auto` = NousResearch/main + les commits
+# du hotfix flotte (branche fleet/hotfix-browser-fr-20260721), consommée par
+# le canary de la release lane (canary-update --ref fleet/auto, 22:30 UTC).
+# En cas de conflit de cherry-pick : le job ÉCHOUE (notification GitHub) et
+# fleet/auto reste sur le dernier candidat sain — la lane ne bouge pas.
+# NB fork : activer les Actions du repo une fois pour que le schedule tourne.
+
+on:
+  schedule:
+    - cron: '45 21 * * *'   # 21:45 UTC, avant le canary-advance de 22:30 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Construire fleet/auto = upstream/main + hotfix
+        run: |
+          set -euo pipefail
+          git config user.name  "fleet-auto[bot]"
+          git config user.email "fleet-auto@users.noreply.github.com"
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch --no-tags upstream main
+          git fetch --no-tags origin fleet/hotfix-browser-fr-20260721
+          # Les 2 commits du hotfix = tout ce qui suit la base 915f1bf1 sur la branche
+          HOTFIX_COMMITS=$(git rev-list --reverse 915f1bf1bc2f939356226250e0eade3c9b3c5960..origin/fleet/hotfix-browser-fr-20260721)
+          git checkout -B fleet/auto upstream/main
+          git cherry-pick $HOTFIX_COMMITS
+          echo "candidat: $(git rev-parse HEAD) = upstream $(git rev-parse --short upstream/main) + hotfix"
+          git push --force origin fleet/auto
