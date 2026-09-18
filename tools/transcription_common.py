@@ -19,6 +19,10 @@ DEFAULT_STT_MODEL = os.getenv("STT_OPENAI_MODEL", "whisper-1")
 DEFAULT_GROQ_STT_MODEL = os.getenv("STT_GROQ_MODEL", "whisper-large-v3-turbo")
 DEFAULT_MISTRAL_STT_MODEL = os.getenv("STT_MISTRAL_MODEL", "voxtral-mini-latest")
 DEFAULT_ELEVENLABS_STT_MODEL = os.getenv("STT_ELEVENLABS_MODEL", "scribe_v2")
+# xAI's /v1/stt still defaults to grok-voice-transcribe-1.0 when ``model`` is omitted.
+# Pin 2.0 so Hermes doesn't stay on 1.0 until xAI flips the server default, then
+# break when 1.0 is removed. Override with STT_XAI_MODEL or stt.xai.model.
+DEFAULT_XAI_STT_MODEL = os.getenv("STT_XAI_MODEL", "grok-voice-transcribe-2.0")
 LOCAL_STT_COMMAND_ENV = "HERMES_LOCAL_STT_COMMAND"
 LOCAL_STT_LANGUAGE_ENV = "HERMES_LOCAL_STT_LANGUAGE"
 COMMON_LOCAL_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
