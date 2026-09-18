@@ -933,7 +933,7 @@ class TestTranscribeXAI:
         data = call_kwargs.kwargs.get("data", call_kwargs[1].get("data", {}))
         assert data.get("language") == "fr"
         assert data.get("format") == "true"
-        assert data.get("model") == "grok-stt"
+        assert data.get("model") == "grok-voice-transcribe-2.0"
 
     def test_omitted_model_pins_transcribe_2(self, monkeypatch, sample_ogg, mock_xai_http_module):
         """xAI still defaults an omitted model to transcribe-1.0. Always send one."""
@@ -1013,6 +1013,17 @@ class TestTranscribeAudioXAIDispatch:
     def test_model_default_is_voice_transcribe_2(self, sample_ogg, monkeypatch):
         monkeypatch.delenv("STT_XAI_MODEL", raising=False)
         with patch("tools.transcription_tools._load_stt_config", return_value={"provider": "xai"}), \
+             patch("tools.transcription_tools._get_provider", return_value="xai"), \
+             patch("tools.transcription_tools._transcribe_xai",
+                   return_value={"success": True, "transcript": "hi"}) as mock_xai:
+            from tools.transcription_tools import transcribe_audio
+            transcribe_audio(sample_ogg, model=None)
+
+        assert mock_xai.call_args[0][1] == "grok-voice-transcribe-2.0"
+
+    def test_legacy_grok_stt_alias_uses_current_default(self, sample_ogg):
+        config = {"provider": "xai", "xai": {"model": "grok-stt"}}
+        with patch("tools.transcription_tools._load_stt_config", return_value=config), \
              patch("tools.transcription_tools._get_provider", return_value="xai"), \
              patch("tools.transcription_tools._transcribe_xai",
                    return_value={"success": True, "transcript": "hi"}) as mock_xai:
