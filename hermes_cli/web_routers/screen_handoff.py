@@ -86,7 +86,7 @@ el('keys').addEventListener('keydown',e=>{const keys={Enter:0xff0d,Backspace:0xf
 if(!cfg.invite)el('ask').hidden=true;await status();setInterval(status,2000);
 </script></body></html>'''.replace("NONCE", nonce).replace("CONFIG", values)
     return HTMLResponse(page, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-        "X-Frame-Options": "DENY", "Content-Security-Policy": f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
+        "X-Frame-Options": "DENY", "Content-Security-Policy": f"default-src 'self'; img-src 'self' data:; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
 
 
 @router.get("/screen-handoff/assets/novnc/{asset_path:path}")

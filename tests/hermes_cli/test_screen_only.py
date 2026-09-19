@@ -30,7 +30,14 @@ def test_http_preview_confirmation_and_cross_profile(tmp_path):
     headers = {"Origin": "https://screen.example", "X-Hermes-Screen": "1"}
     with TestClient(a, base_url="https://screen.example") as client:
         invite = "/handoff/a/screen-handoff/" + row.invite_token
-        assert client.get(invite).status_code == 200
+        preview = client.get(invite)
+        assert preview.status_code == 200
+        # noVNC decodes Tight JPEG/PNG rectangles through data: images. Blocking
+        # them stalls its render queue even after the RFB connection succeeds.
+        csp = dict(part.strip().split(' ', 1) for part in preview.headers['content-security-policy'].split(';') if part.strip())
+        assert csp['img-src'] == "'self' data:"
+        assert csp['default-src'] == "'self'"
+        assert 'data:' not in csp['script-src']
         assert store.get(row.request_id).state == "pending"
         assert store.pending_confirmations() == []
         assert client.post(invite + "/challenge").status_code == 403
