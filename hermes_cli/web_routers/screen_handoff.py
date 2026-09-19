@@ -130,6 +130,7 @@ const setStatus = (text, cls='muted') => {{ status.textContent=text; status.clas
 async function post(path, body={{}}) {{ const res=await fetch('/screen-handoff/'+encodeURIComponent(token)+path, {{method:'POST', headers:{{'content-type':'application/json'}}, credentials:'same-origin', body:JSON.stringify(body)}}); let data={{}}; try{{data=await res.json()}}catch{{}}; if(!res.ok) throw new Error(data.error||'Request failed'); return data; }}
 document.querySelector('#authorize').onclick = async () => {{ try {{ await post('/authorize', {{code:document.querySelector('#code').value}}); document.querySelector('#confirm').hidden=true; document.querySelector('#controls').hidden=false; setStatus('Autorisation confirmée. Prenez la main quand vous êtes prêt.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
 document.querySelector('#refuse').onclick = async () => {{ try {{ await post('/refuse'); document.querySelector('#confirm').hidden=true; setStatus('Demande refusée.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
+fetch('/screen-handoff/'+encodeURIComponent(token)+'/status', {{credentials:'same-origin'}}).then(r=>r.ok?r.json():null).then(data=>{{ if(data && ['authorized','human'].includes(data.state)){{ document.querySelector('#confirm').hidden=true; document.querySelector('#controls').hidden=false; setStatus(data.state==='human'?'Contrôle déjà réservé à ce navigateur.':'Autorisation confirmée. Prenez la main quand vous êtes prêt.','ok'); }} }}).catch(()=>{{}});
 document.querySelector('#takeover').onclick = async () => {{ try {{ const data=await post('/takeover'); const RFB=(await import('/screen-handoff/assets/novnc/core/rfb.js')).default; const ws=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/display/ws?display_ticket='+encodeURIComponent(data.display_ticket); rfb=new RFB(screen,ws); rfb.scaleViewport=true; rfb.resizeSession=true; rfb.viewOnly=false; rfb.addEventListener('connect',()=>{{setStatus('Contrôle acquis. Vous pouvez vous connecter dans le navigateur.','ok'); document.querySelector('#takeover').hidden=true; document.querySelector('#return').hidden=false;}}); rfb.addEventListener('disconnect',()=>{{if(!document.querySelector('#return').hidden) setStatus('Connexion interrompue. Le contrôle reste réservé jusqu’à une nouvelle autorisation.','error');}}); }} catch(e) {{ setStatus(e.message,'error'); }} }};
 document.querySelector('#return').onclick = async () => {{ try {{ await post('/return'); if(rfb){{rfb.viewOnly=true; rfb.disconnect();}} document.querySelector('#return').hidden=true; setStatus('Contrôle rendu. Hermes va réobserver le navigateur avant de poursuivre.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
 </script></body></html>"""
@@ -179,6 +180,19 @@ async def screen_handoff_refuse(token: str) -> Response:
         return _json_error(410, "screen invitation is expired or invalid")
     store.refuse(token)
     return JSONResponse({"success": True, "state": "revoked"}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/screen-handoff/{token}/status")
+async def screen_handoff_status(token: str, request: Request) -> Response:
+    _store_for_token, invitation = _find(token)
+    cookie = _cookie(request)
+    if invitation is None or not cookie:
+        return JSONResponse({"success": True, "state": invitation.state if invitation else "unknown"},
+                            headers={"Cache-Control": "no-store"})
+    store, session = _find_session(cookie)
+    if store is None or session is None or session.request_id != invitation.request_id:
+        return JSONResponse({"success": True, "state": invitation.state}, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"success": True, "state": session.state}, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/screen-handoff/{token}/takeover")
