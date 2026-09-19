@@ -551,11 +551,37 @@ class GatewayAdapterLifecycleMixin:
         """Resume the exact Telegram/Discord session after an explicit return."""
         from gateway.run import _async_profile_runtime_scope, _handoff_watch_scopes
         from gateway.screen_handoff import ScreenHandoffStore
-        from gateway.wake import deliver_wake
+        import json
+        from gateway.wake import admit_internal_event
+        from gateway.platforms.event import MessageEvent, MessageType
         from hermes_constants import get_hermes_home
+        initialized, inflight = set(), set()
 
         async def _tick(profile_home):
             store = ScreenHandoffStore(profile_home or get_hermes_home())
+            if store.profile_home not in initialized:
+                store.recover_resumes()
+                initialized.add(store.profile_home)
+            from gateway.session import SessionSource
+            for pending in store.pending_confirmations():
+                source = SessionSource.from_dict(json.loads(pending["source_json"]))
+                adapter = self._adapter_for_source(source)
+                if adapter is None:
+                    continue
+                try:
+                    result = await adapter.send_screen_handoff_confirmation(
+                        user_id=str(source.user_id), challenge_id=pending["id"], code=pending["code"])
+                    store.confirmation_delivered(pending["id"], bool(getattr(result, "success", False)))
+                except Exception:
+                    store.confirmation_delivered(pending["id"], False)
+            from tools.bot_desktop import lease
+            for handoff in store.returning():
+                held = lease.get(profile_key=handoff.profile_home)
+                if held.holder == lease.HUMAN and held.viewer_id != handoff.viewer_id:
+                    continue
+                released = lease.release(handoff.viewer_id, profile_key=handoff.profile_home)
+                if released.holder == lease.AGENT:
+                    store.complete_return(handoff.request_id)
             for handoff in store.claim_returned():
                 try:
                     source = store.source(handoff)
@@ -565,24 +591,27 @@ class GatewayAdapterLifecycleMixin:
                     adapter = self._adapter_for_source(source)
                     if adapter is None:
                         raise RuntimeError("the original messaging adapter is not connected")
-                    await deliver_wake(
-                        adapter,
-                        text=(
-                            "The human has returned control of the Bot Desktop. Re-observe the existing "
-                            "browser before doing anything else; the return does not prove that sign-in "
-                            "succeeded. Continue the original task only after observing the page."
-                        ),
-                        session_id=handoff.session_id,
-                        source=source,
-                        profile=getattr(source, "profile", None),
-                    )
-                    store.finish_resume(handoff.request_id)
+                    key = self._session_key_for_source(source)
+                    identity = (handoff.profile_home, handoff.request_id)
+                    if identity in inflight or key in getattr(adapter, "_active_sessions", {}) or key in getattr(adapter, "_pending_messages", {}):
+                        continue
+                    store.queue_resume(handoff.request_id)
+                    event = MessageEvent(
+                        text="The human returned control. Re-observe the existing browser before continuing the original task; return does not prove sign-in succeeded.",
+                        message_type=MessageType.TEXT, source=source, internal=True,
+                        message_id="screen-resume:" + handoff.request_id,
+                        metadata={"gateway_session_key": key, "gateway_session_strict": True,
+                                  "gateway_session_id": handoff.session_id, "screen_handoff_id": handoff.request_id,
+                                  "screen_handoff_home": handoff.profile_home, "screen_handoff_session": handoff.session_id})
+                    await admit_internal_event(adapter, event)
+                    inflight.add(identity)
                 except Exception as exc:
                     logger.debug("screen handoff resume failed for %s: %s", handoff.request_id, exc, exc_info=True)
                     if "deleted or replaced" in str(exc):
                         store.abandon_resume(handoff.request_id, str(exc))
                     else:
-                        store.finish_resume(handoff.request_id, error=str(exc))
+                        # A refused admission remains queued. A running result is never replayed.
+                        pass
 
         while self._running:
             try:

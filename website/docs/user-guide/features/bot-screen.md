@@ -245,6 +245,74 @@ Xauthority, launcher log, per-profile xfconf).
   D-Bus address; every cua-driver and headed-browser spawn for that profile
   inherits them, so the bot never acts on a display a human is sitting at.
 
+## Private screen access from Telegram or Discord
+
+`request_screen_access(reason)` sends an invitation in a private message and
+returns immediately. It never takes control or waits for the person, and its
+result contains no usable link. Opening the invitation does not authorize the
+browser. The person requests confirmation on the page, compares its code with
+the private message, approves there, then explicitly takes control on the page.
+The messaging adapter checks the real user identity; typing the comparison
+code into a page cannot authorize access. A failed private delivery never
+publishes the link in the originating group.
+
+Install the graphical packages and noVNC during deployment, then configure the
+same profile used by the messaging gateway:
+
+```yaml
+bot_desktop:
+  auto_start: true
+  min_free_memory_mb: 1536
+  handoff:
+    enabled: true
+    public_url: https://agent.example/handoff/my-deployment
+    local_port: 8766
+```
+
+```bash
+hermes serve --screen-only --host 127.0.0.1 --port 8766
+```
+
+The screen-only server assembles the existing screen routes and RFB bridge;
+it has no dashboard, general gateway RPC, or API documentation routes. Run one
+instance per profile, under the same system user as that profile's gateway.
+Terminate HTTPS at your proxy, preserve the public Host and Origin, strip the
+configured path prefix, and proxy only that prefix to this service. Keep the
+local health endpoint and port private. Disable proxy access logging of
+invitation and WebSocket ticket URLs. noVNC must be available in the Desktop
+package's `node_modules/@novnc/novnc` or in
+`/opt/hermes-screen/node_modules/@novnc/novnc`; nothing is installed on a request.
+`local_port` is the read-only readiness probe port and must match the server.
+
+The tool belongs to `screen_handoff`, enabled only for configured Telegram and
+Discord sources with an authenticated user. `agent.disabled_toolsets` can
+disable it. The existing `auto_start` and memory gate still govern lazy desktop
+startup. Pin `AGENT_BROWSER_PROFILE` and `AGENT_BROWSER_EXECUTABLE_PATH` equally
+for the gateway and desktop to share an existing headed Chromium profile; do
+not configure an external `browser.cdp_url` for this local screen workflow.
+
+Invitations last ten minutes, browser confirmations two minutes, and web access
+thirty minutes. Cookies are Secure and HttpOnly. Expiration and revocation close
+an already open stream; disconnecting, closing the web page, or losing access
+does **not** return control. The owner can use `/screen` in a private message
+to reauthorize access while retaining the original conversation, including a
+group or topic. The gateway delivers persisted confirmation requests even after
+the initiating agent turn ends.
+
+**Return control and continue** records intent before releasing the existing
+Bot Desktop lease. The gateway admits the original session's continuation once,
+deduplicated by request ID, and asks it to reobserve the browser. A restart
+reconciles pending returns and queued admissions. An interrupted admitted turn
+is marked `needs_attention` and is not automatically replayed; inspect the
+original conversation before continuing. Returning control does not prove login
+succeeded and does not authorize a new action. Desktop's intentional close
+behavior remains unchanged.
+
+This uses Bot Screen's tool-level lease, not isolation from processes running
+under the same system user. Credentials stay in the displayed browser rather
+than the chat. Real Discord and passkey qualification are separate from these
+authorization and transport guarantees.
+
 ## Troubleshooting
 
 - **"Screen packages missing"** — click **Install on host** in the pane, or run

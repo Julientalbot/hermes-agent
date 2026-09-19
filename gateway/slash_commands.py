@@ -320,10 +320,10 @@ class GatewaySlashCommandsMixin(
         platform = getattr(getattr(source, "platform", None), "value", "") if source is not None else ""
         if source is None or platform not in {"telegram", "discord"} or not source.user_id:
             return "Private screen takeover is available only from an authenticated Telegram or Discord identity."
+        if str(source.chat_type) not in {"dm", "private"}:
+            return "Open a private conversation with this bot, then use /screen."
         session_key = self._session_key_for_source(source)
-        session_id = self.session_store.peek_session_id(session_key)
-        if not session_id:
-            return "There is no active browser session to recover."
+        session_id = self.session_store.peek_session_id(session_key) or ""
         from gateway.screen_handoff import ScreenHandoffStore
         from hermes_constants import get_hermes_home
         from tools.bot_desktop.runtime import status
@@ -340,7 +340,7 @@ class GatewaySlashCommandsMixin(
             return "There is no active screen handoff for this session. Ask Hermes to request screen access again."
         public_url = ""
         try:
-            from hermes_cli.dashboard_auth.prefix import resolve_public_url
+            from gateway.screen_handoff_config import public_url as resolve_public_url
             public_url = resolve_public_url().rstrip("/")
         except Exception:
             pass

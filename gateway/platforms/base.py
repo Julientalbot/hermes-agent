@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import inspect
+import json
 import ipaddress
 import logging
 import os
@@ -2745,6 +2746,9 @@ class BasePlatformAdapter(ABC):
         """
         return SendResult(success=False, error="private screen handoff is not supported by this adapter")
 
+    async def send_screen_handoff_confirmation(self, *, user_id: str, challenge_id: str, code: str) -> SendResult:
+        return SendResult(success=False, error="private screen confirmation is not supported")
+
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Send a typing indicator; ``metadata`` carries platform context (Slack thread_id)."""
 
@@ -4300,7 +4304,25 @@ class BasePlatformAdapter(ABC):
         typing_task = self._start_typing_refresh(event, interrupt_event, _thread_metadata)
         try:
             await self._run_processing_hook("on_processing_start", event)
-            response = await self._message_handler(event)
+            screen_resume = None
+            metadata = event.metadata or {}
+            if event.internal and metadata.get("screen_handoff_id"):
+                from gateway.screen_handoff import ScreenHandoffStore
+                screen_resume = ScreenHandoffStore(metadata["screen_handoff_home"])
+                if not screen_resume.begin_resume(metadata["screen_handoff_id"],
+                        session_id=metadata["screen_handoff_session"],
+                        source_json=json.dumps(event.source.to_dict())):
+                    return
+            try:
+                response = await self._message_handler(event)
+            except BaseException:
+                if screen_resume:
+                    screen_resume.finish_resume(metadata["screen_handoff_id"], error="resume_outcome_unknown")
+                raise
+            else:
+                if screen_resume:
+                    screen_resume.finish_resume(metadata["screen_handoff_id"],
+                        error="" if metadata.get("screen_handoff_route_accepted") else "original_session_not_admitted")
             # A muted diagnostic wake ran for the session; its reply is not presented. The
             # policy read binds the routed profile; delivery itself stays in the launch scope.
             with self._media_delivery_scope(event.source):

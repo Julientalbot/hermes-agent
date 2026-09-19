@@ -1026,6 +1026,8 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.DISCORD)
+        from hermes_constants import get_hermes_home
+        self._screen_profile_home = str(get_hermes_home())
         self._client: Optional[commands.Bot] = None
         self._ready_event = asyncio.Event()
         self._allowed_user_ids: set = set()  # For button approval authorization
@@ -1278,6 +1280,7 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
             # READY itself is a DISPATCH event, so a healthy connection stamps almost immediately.
             self._last_dispatched_event_monotonic = None
             adapter_self = self  # capture for closure
+            self._client.add_listener(self._handle_screen_handoff_interaction, "on_interaction")
 
             @self._client.event
             async def on_ready():
@@ -3053,7 +3056,7 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         metadata: Optional[dict] = None,
     ) -> SendResult:
         """Create a Discord DM and put the URL behind a link button."""
-        if not self._client or not DISCORD_AVAILABLE or not str(user_id).isdigit() or not url or not code:
+        if not self._client or not DISCORD_AVAILABLE or not str(user_id).isdigit() or not url:
             return SendResult(success=False, error="Discord private delivery unavailable")
         try:
             user = self._client.get_user(int(user_id)) or await self._client.fetch_user(int(user_id))
@@ -3063,14 +3066,41 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
             content = (
                 "🔐 **Hermes needs a brief browser takeover.**\n\n"
                 f"Reason: {str(reason or 'browser sign-in')[:500]}\n\n"
-                f"Open the secure screen and enter code `{str(code)}` on the page.\n"
-                "The link expires in 10 minutes and the code in 2 minutes. Never send a password in chat."
+                "Open the secure screen, request authorization, then confirm it in this private conversation.\n"
+                "The link expires in 10 minutes. Never send a password in chat."
             )
             msg = await dm.send(content=content, view=view)
             return SendResult(success=True, message_id=str(msg.id))
         except Exception:
             logger.warning("[%s] Discord private screen handoff delivery failed", self.name, exc_info=True)
             return SendResult(success=False, error="Discord private delivery failed", retryable=True)
+
+    async def send_screen_handoff_confirmation(self, *, user_id: str, challenge_id: str, code: str) -> SendResult:
+        try:
+            user = self._client.get_user(int(user_id)) or await self._client.fetch_user(int(user_id))
+            dm = user.dm_channel or await user.create_dm()
+            view = discord.ui.View(timeout=120)
+            for choice, label in (("allow", "Autoriser"), ("deny", "Refuser")):
+                view.add_item(discord.ui.Button(label=label, custom_id=f"screen:{choice}:{challenge_id}"))
+            msg = await dm.send(content=f"Autoriser le navigateur affichant **{code}** ? Valable deux minutes.", view=view)
+            return SendResult(success=True, message_id=str(msg.id))
+        except Exception:
+            return SendResult(success=False, error="private confirmation unavailable")
+
+    async def _handle_screen_handoff_interaction(self, interaction):
+        data = getattr(interaction, "data", None) or {}
+        custom = str(data.get("custom_id") or "")
+        if not custom.startswith("screen:"):
+            return
+        parts = custom.split(":")
+        if len(parts) != 3 or parts[1] not in {"allow", "deny"} or interaction.guild is not None:
+            return
+        from gateway.screen_handoff import ScreenHandoffStore
+        accepted = ScreenHandoffStore(self._screen_profile_home).decide(
+            parts[2], platform="discord", user_id=str(interaction.user.id), allow=parts[1] == "allow")
+        await interaction.response.send_message("Confirmation enregistrée" if accepted else "Demande expirée ou invalide", ephemeral=True)
+        if accepted and interaction.message:
+            await interaction.message.edit(view=None)
 
     @staticmethod
     def _forum_thread_parts(thread: Any) -> tuple:

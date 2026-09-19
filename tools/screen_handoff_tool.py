@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def _public_url() -> str:
-    from hermes_cli.dashboard_auth.prefix import resolve_public_url
+    from gateway.screen_handoff_config import public_url as resolve_public_url
     return str(resolve_public_url() or "").rstrip("/")
 
 
@@ -23,10 +23,9 @@ def _check_screen_handoff() -> bool:
         return False
     try:
         from tools.bot_desktop.runtime import status
-        # Starting the screen belongs to the explicit request, never to tool
-        # discovery or to opening the private link.  ``installed`` is the
-        # service capability; the handler performs the idempotent start.
-        return bool(status().installed)
+        from gateway.screen_handoff_config import service_ready
+        # Discovery is read-only. Bot Desktop owns its configured lazy start.
+        return bool(status().installed and service_ready())
     except Exception:
         return False
 
@@ -74,13 +73,12 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
     origin_json, profile_home, session_key = source_info
     if not session_key or not has_screen_handoff_notify(session_key):
         return json.dumps({"success": False, "error": "screen handoff is unavailable for this turn"})
-    try:
-        from tools.bot_desktop.runtime import ensure_started_for_tool, status
-        ensure_started_for_tool()
-        if not status().running:
-            return json.dumps({"success": False, "error": "Bot Desktop could not be started"})
-    except Exception:
-        return json.dumps({"success": False, "error": "Bot Desktop status is unavailable"})
+    if not _check_screen_handoff():
+        return json.dumps({"success": False, "error": "the local screen service is unavailable"})
+    from tools.bot_desktop.runtime import ensure_started_for_tool, status
+    ensure_started_for_tool()
+    if not status().running:
+        return json.dumps({"success": False, "error": "Bot Desktop is stopped; check auto_start and its resource requirements"})
     store = ScreenHandoffStore(profile_home)
     try:
         handoff, created = store.create_or_get(session_id=session_id, source_json=origin_json, reason=reason)
@@ -100,13 +98,13 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
             "reused": not created,
         })
     except Exception as exc:
-        logger.exception("screen handoff request failed")
+        logger.warning("screen handoff request failed (%s)", type(exc).__name__)
         return json.dumps({"success": False, "error": f"screen handoff failed: {type(exc).__name__}"})
 
 
 registry.register(
     name="request_screen_access",
-    toolset="computer_use",
+    toolset="screen_handoff",
     schema={
         "name": "request_screen_access",
         "description": (

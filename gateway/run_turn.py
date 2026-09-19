@@ -375,9 +375,13 @@ class GatewayTurnMixin:
         self._cache_session_source(session_key, source)
         if await asyncio.to_thread(self._is_telegram_topic_lane, source):
             session_entry = await self._hmwa_heal_telegram_topic_binding(source, session_entry, session_key)
+        if strict_session and session_entry.session_id != pinned_session_id:
+            return
         from gateway.run_heartbeat_acceptance import resolve_heartbeat_owner
         if not await resolve_heartbeat_owner(self, event, session_entry):
             return
+        if event.internal and event_metadata.get("screen_handoff_id"):
+            event.metadata["screen_handoff_route_accepted"] = True
         return source, session_entry, session_key
 
     async def _hmwa_heal_telegram_topic_binding(self, source, session_entry, session_key):
@@ -2291,7 +2295,14 @@ class GatewayTurnMixin:
             pts = dict(user_config.get("platform_toolsets") or {})
             pts[platform_key] = [str(x) for x in override]
             user_config = {**user_config, "platform_toolsets": pts}
-        return sorted(_get_platform_tools(user_config, platform_key))
+        enabled = set(_get_platform_tools(user_config, platform_key))
+        # Channel identity belongs here, not in a process-wide tool check.
+        enabled.discard("screen_handoff")
+        handoff = (user_config.get("bot_desktop") or {}).get("handoff") or {}
+        if (platform_key in {"telegram", "discord"} and source.user_id
+                and handoff.get("enabled") is True and handoff.get("public_url")):
+            enabled.add("screen_handoff")
+        return sorted(enabled)
 
     def _resolve_turn_toolsets(self, user_config: dict, source: "SessionSource", platform_key: str):
         """``(enabled_toolsets, disabled_toolsets)`` for an agent run on ``source``."""

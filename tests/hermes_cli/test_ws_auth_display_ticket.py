@@ -28,8 +28,9 @@ def _ws(ticket: str):
         client=SimpleNamespace(host="203.0.113.9"), url=SimpleNamespace(path="/api/ws"))
 
 
-def test_display_ticket_is_refused_as_a_gateway_login(gated_state):
-    ticket = mint_ticket(user_id="display:v", provider="bot-desktop",
+@pytest.mark.parametrize("provider", ["bot-desktop", "bot-desktop-handoff"])
+def test_display_ticket_is_refused_as_a_gateway_login(gated_state, provider):
+    ticket = mint_ticket(user_id="display:v", provider=provider,
                          extra={"hermes_home": "/srv/hermes/bot-a", "viewer_id": "v"})
     ws = _ws(ticket)
     reason, _credential = _web_server_chat._ws_auth_reason(ws)

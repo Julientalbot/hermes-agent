@@ -1,255 +1,185 @@
-"""Mobile web screen takeover for the local Bot Desktop.
-
-The invitation token is only a short-lived locator.  The page must also receive the
-short code from the user's private Telegram/Discord message before it receives a
-web-session cookie or a display ticket.
-"""
-
+"""Private screen access; authorization happens in the originating messenger."""
 from __future__ import annotations
 
 import hashlib
-import html
 import json
-import logging
 import secrets
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
-
-from hermes_cli.dashboard_auth.prefix import resolve_public_url
+from gateway.screen_handoff_config import allowed_origin, public_path
 
 router = APIRouter()
 _COOKIE = "hermes_screen_session"
 
 
-def _store(profile_home: str | None = None):
+def _store():
     from gateway.screen_handoff import ScreenHandoffStore
-    return ScreenHandoffStore(profile_home)
+    return ScreenHandoffStore()
 
 
-def _candidate_homes() -> list[str]:
-    from hermes_constants import get_hermes_home
-    homes = [str(get_hermes_home())]
-    try:
-        from hermes_cli.profiles import _get_profiles_root
-        root = _get_profiles_root()
-        if root.is_dir():
-            homes.extend(str(p) for p in root.iterdir() if p.is_dir())
-    except Exception:
-        pass
-    return list(dict.fromkeys(homes))
+def _viewer_id(cookie):
+    return "screen-" + hashlib.sha256(cookie.encode()).hexdigest()[:32]
 
 
-def _find(token: str, *, mark_opened: bool = False):
-    for home in _candidate_homes():
-        handoff = _store(home).by_token(token, mark_opened=mark_opened)
-        if handoff is not None:
-            return _store(home), handoff
-    return None, None
+def _error(status, message):
+    return JSONResponse({"error": message}, status_code=status, headers={"Cache-Control": "no-store"})
 
 
-def _find_session(cookie: str):
-    for home in _candidate_homes():
-        handoff = _store(home).web_session(cookie)
-        if handoff is not None:
-            return _store(home), handoff
-    return None, None
+def _mutation_allowed(request):
+    return allowed_origin(request.headers.get("origin", "")) and request.headers.get("x-hermes-screen") == "1"
 
 
-def _find_any_session(cookie: str):
-    for home in _candidate_homes():
-        handoff = _store(home).any_web_session(cookie)
-        if handoff is not None:
-            return _store(home), handoff
-    return None, None
+def _session(request, request_id, *, returned=False):
+    cookie = request.cookies.get(_COOKIE, "")
+    store = _store()
+    row = store.any_web_session(cookie) if returned else store.web_session(cookie)
+    return store, row if row and row.request_id == request_id else None, cookie
 
 
-def _cookie(request: Request) -> str:
-    return str(request.cookies.get(_COOKIE) or "")
-
-
-def _viewer_id(cookie: str) -> str:
-    return "screen-" + hashlib.sha256(cookie.encode("utf-8")).hexdigest()[:32]
-
-
-def _json_error(status: int, message: str) -> JSONResponse:
-    return JSONResponse({"success": False, "error": message}, status_code=status,
-                        headers={"Cache-Control": "no-store"})
-
-
-def _cookie_response(response: Response, value: str, request: Request) -> Response:
-    public = resolve_public_url()
-    secure = request.url.scheme == "https" or public.startswith("https://")
-    response.set_cookie(
-        _COOKIE, value, max_age=30 * 60, httponly=True, secure=secure,
-        samesite="strict", path="/screen-handoff",
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-def _novnc_root() -> Path | None:
-    """Locate the pinned noVNC package shipped by the candidate image or Desktop checkout."""
-    candidates = (
-        Path("/opt/hermes-screen/node_modules/@novnc/novnc"),
-        Path(__file__).resolve().parents[2] / "apps" / "desktop" / "node_modules" / "@novnc" / "novnc",
-    )
-    for root in candidates:
-        if (root / "core" / "rfb.js").is_file():
+def _novnc_root():
+    for root in (Path("/opt/hermes-screen/node_modules/@novnc/novnc"),
+                 Path(__file__).resolve().parents[2] / "apps/desktop/node_modules/@novnc/novnc"):
+        if (root / "core/rfb.js").is_file():
             return root
     return None
 
 
-def _page(token: str) -> str:
-    safe = html.escape(token, quote=True)
-    # The candidate image serves the same pinned noVNC package as Desktop. The page is deliberately
-    # a tiny client: it gets one display ticket from the server and cannot call gateway RPC methods.
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes secure browser screen</title>
-<style>
-body{{margin:0;background:#111827;color:#f9fafb;font:16px system-ui,sans-serif}}
-main{{max-width:900px;margin:auto;padding:18px}} h1{{font-size:1.25rem}}
-button,input{{font:inherit;border-radius:8px;padding:10px 12px}} button{{border:0;background:#38bdf8;color:#082f49;font-weight:700}}
-button.secondary{{background:#334155;color:#f8fafc}} input{{width:9rem;background:#fff;border:0;letter-spacing:.2em;text-transform:uppercase}}
-#screen{{margin-top:14px;background:#000;min-height:260px;display:grid;place-items:center;overflow:auto}}
-#screen canvas{{max-width:100%;height:auto}} .muted{{color:#cbd5e1}} .error{{color:#fda4af}} .ok{{color:#86efac}}
-</style></head><body><main>
-<h1>Reprendre le navigateur Hermes</h1>
-<p id="status" class="muted">Ce lien ne prend pas le contrôle. Confirmez le code reçu dans votre conversation privée.</p>
-<section id="confirm"><input id="code" inputmode="text" autocomplete="one-time-code" maxlength="6" placeholder="CODE"><button id="authorize">Confirmer</button> <button id="refuse" class="secondary">Refuser</button></section>
-<section id="controls" hidden><button id="takeover">Prendre la main</button> <button id="return" class="secondary" hidden>Rendre la main et continuer</button></section>
-<div id="screen"><span class="muted">Aucun écran partagé</span></div>
-<p class="muted">Saisissez vos identifiants uniquement dans le navigateur affiché. Hermes ne reçoit ni mot de passe ni frappe.</p>
-</main><script type="module">
-const token = "{safe}"; const status = document.querySelector('#status'); const screen = document.querySelector('#screen');
-let rfb = null;
-const setStatus = (text, cls='muted') => {{ status.textContent=text; status.className=cls; }};
-async function post(path, body={{}}) {{ const res=await fetch('/screen-handoff/'+encodeURIComponent(token)+path, {{method:'POST', headers:{{'content-type':'application/json'}}, credentials:'same-origin', body:JSON.stringify(body)}}); let data={{}}; try{{data=await res.json()}}catch{{}}; if(!res.ok) throw new Error(data.error||'Request failed'); return data; }}
-document.querySelector('#authorize').onclick = async () => {{ try {{ await post('/authorize', {{code:document.querySelector('#code').value}}); document.querySelector('#confirm').hidden=true; document.querySelector('#controls').hidden=false; setStatus('Autorisation confirmée. Prenez la main quand vous êtes prêt.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
-document.querySelector('#refuse').onclick = async () => {{ try {{ await post('/refuse'); document.querySelector('#confirm').hidden=true; setStatus('Demande refusée.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
-fetch('/screen-handoff/'+encodeURIComponent(token)+'/status', {{credentials:'same-origin'}}).then(r=>r.ok?r.json():null).then(data=>{{ if(data && ['authorized','human'].includes(data.state)){{ document.querySelector('#confirm').hidden=true; document.querySelector('#controls').hidden=false; setStatus(data.state==='human'?'Contrôle déjà réservé à ce navigateur.':'Autorisation confirmée. Prenez la main quand vous êtes prêt.','ok'); }} }}).catch(()=>{{}});
-document.querySelector('#takeover').onclick = async () => {{ try {{ const data=await post('/takeover'); const RFB=(await import('/screen-handoff/assets/novnc/core/rfb.js')).default; const ws=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/display/ws?display_ticket='+encodeURIComponent(data.display_ticket); rfb=new RFB(screen,ws); rfb.scaleViewport=true; rfb.resizeSession=true; rfb.viewOnly=false; rfb.addEventListener('connect',()=>{{setStatus('Contrôle acquis. Vous pouvez vous connecter dans le navigateur.','ok'); document.querySelector('#takeover').hidden=true; document.querySelector('#return').hidden=false;}}); rfb.addEventListener('disconnect',()=>{{if(!document.querySelector('#return').hidden) setStatus('Connexion interrompue. Le contrôle reste réservé jusqu’à une nouvelle autorisation.','error');}}); }} catch(e) {{ setStatus(e.message,'error'); }} }};
-document.querySelector('#return').onclick = async () => {{ try {{ await post('/return'); if(rfb){{rfb.viewOnly=true; rfb.disconnect();}} document.querySelector('#return').hidden=true; setStatus('Contrôle rendu. Hermes va réobserver le navigateur avant de poursuivre.','ok'); }} catch(e) {{ setStatus(e.message,'error'); }} }};
-</script></body></html>"""
+def _page(request_id, invite=""):
+    nonce = secrets.token_urlsafe(24)
+    values = json.dumps({"request": request_id, "invite": invite, "prefix": public_path()}).replace("<", "\\u003c")
+    page = '''<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Reprendre le navigateur Hermes</title>
+<style>body{margin:0;background:#111827;color:#f9fafb;font:16px system-ui}main{max-width:1100px;margin:auto;padding:16px}
+button,textarea{font:inherit;padding:12px;margin:4px;border-radius:8px}button{border:0;background:#38bdf8;color:#082f49}
+#screen{height:65vh;background:#000;overflow:hidden;margin-top:12px}#code{font-size:2rem;letter-spacing:.3em}
+textarea{width:80%;height:2em}</style></head><body><main>
+<h1>Reprendre le navigateur</h1><p id="status">L’ouverture de cette page ne prend pas le contrôle.</p>
+<p id="code"></p><button id="ask">Demander l’autorisation dans la conversation privée</button>
+<button id="take" hidden>Prendre la main</button><button id="give" hidden>Rendre la main et continuer</button>
+<button id="keyboard" hidden>Clavier</button><textarea id="keys" hidden autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Clavier distant"></textarea>
+<div id="screen"></div><p>Saisissez vos accès dans le navigateur affiché. Ils ne passent pas dans la conversation.
+Le navigateur fonctionne sur la VM de votre agent ; ce n’est pas une isolation contre les processus de cette VM.</p>
+</main><script nonce="NONCE" type="module">
+const cfg=CONFIG, base=cfg.prefix+'/screen-handoff', path=base+'/r/'+encodeURIComponent(cfg.request);
+const el=id=>document.getElementById(id);let rfb=null,returned=false;
+const say=text=>{el('status').textContent=text};
+async function post(url){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'X-Hermes-Screen':'1'}});const d=await r.json();if(!r.ok)throw Error(d.error||'Accès indisponible');return d}
+async function status(){try{const r=await fetch(path+'/status',{credentials:'same-origin'});const d=await r.json();
+if(d.state==='authorized'||d.state==='human'){el('ask').hidden=true;el('code').textContent='';el('take').hidden=!!rfb;if(!rfb)say('Autorisation confirmée. Vous pouvez prendre la main.');}
+else if(d.state==='waiting'){el('code').textContent=d.code;say('Confirmez ce même code dans votre conversation privée.');}
+else if(['returned','queued','resuming','resumed','returning','needs_attention'].includes(d.state)){returned=true;if(rfb){rfb.disconnect();rfb=null}el('take').hidden=true;el('give').hidden=true;el('keyboard').hidden=true;say(d.state==='needs_attention'?'Contrôle rendu. Reprise incertaine : vérifiez la conversation avant de continuer.':d.state==='returning'?'Restitution en cours.':'Contrôle rendu. Hermes va réobserver le navigateur avant de poursuivre.');}
+else if(['expired','deny','superseded','unauthorized'].includes(d.state)&&!cfg.invite){if(rfb){rfb.disconnect();rfb=null}el('take').hidden=true;el('give').hidden=true;say('Accès terminé. Utilisez /screen dans votre conversation privée pour récupérer la reprise.');}
+}catch{}}
+el('ask').onclick=async()=>{try{const d=await post(base+'/'+encodeURIComponent(cfg.invite)+'/challenge');el('code').textContent=d.code;el('ask').hidden=true;cfg.invite='';history.replaceState(null,'',path);await status()}catch(e){say(e.message)}};
+el('take').onclick=async()=>{try{const d=await post(path+'/takeover');const RFB=(await import(base+'/assets/novnc/core/rfb.js')).default;
+if(rfb)rfb.disconnect();rfb=new RFB(el('screen'),(location.protocol==='https:'?'wss://':'ws://')+location.host+cfg.prefix+'/api/display/ws?display_ticket='+encodeURIComponent(d.display_ticket));
+rfb.scaleViewport=true;rfb.resizeSession=true;
+rfb.addEventListener('connect',()=>{el('take').hidden=true;el('give').hidden=false;el('keyboard').hidden=false;say('Contrôle acquis. Connectez-vous dans ce navigateur.');});
+rfb.addEventListener('disconnect',()=>{rfb=null;el('keyboard').hidden=true;if(!returned){el('take').hidden=false;say('Connexion interrompue. Le contrôle reste humain. Reconnectez-vous ou utilisez /screen.');}});
+}catch(e){say(e.message)}};
+el('give').onclick=async()=>{try{await post(path+'/return');returned=true;if(rfb){rfb.disconnect();rfb=null}await status()}catch(e){say(e.message)}};
+el('keyboard').onclick=()=>{el('keys').hidden=!el('keys').hidden;if(!el('keys').hidden)el('keys').focus()};
+el('keys').addEventListener('input',e=>{if(rfb){for(const ch of e.target.value){const cp=ch.codePointAt(0);rfb.sendKey(cp<=255?cp:0x01000000|cp)}}e.target.value=''});
+el('keys').addEventListener('keydown',e=>{const keys={Enter:0xff0d,Backspace:0xff08,Tab:0xff09,Escape:0xff1b};if(rfb&&keys[e.key]){e.preventDefault();rfb.sendKey(keys[e.key])}});
+if(!cfg.invite)el('ask').hidden=true;await status();setInterval(status,2000);
+</script></body></html>'''.replace("NONCE", nonce).replace("CONFIG", values)
+    return HTMLResponse(page, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        "X-Frame-Options": "DENY", "Content-Security-Policy": f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
 
 
 @router.get("/screen-handoff/assets/novnc/{asset_path:path}")
-async def screen_handoff_novnc_asset(asset_path: str) -> Response:
-    """Serve only JavaScript from the pinned noVNC package, never package metadata."""
+async def asset(asset_path: str):
     root = _novnc_root()
-    if root is None or not asset_path or not asset_path.endswith(".js"):
-        return Response(status_code=404, headers={"Cache-Control": "no-store"})
-    candidate = (root / asset_path).resolve()
-    if root.resolve() not in candidate.parents or not candidate.is_file():
-        return Response(status_code=404, headers={"Cache-Control": "no-store"})
-    return FileResponse(candidate, media_type="text/javascript", headers={"Cache-Control": "public, max-age=3600"})
+    if not root or not asset_path.endswith(".js"):
+        return Response(status_code=404)
+    file = (root / asset_path).resolve()
+    if root.resolve() not in file.parents or not file.is_file():
+        return Response(status_code=404)
+    return FileResponse(file, media_type="text/javascript")
 
 
-@router.get("/screen-handoff/{token}", response_class=HTMLResponse)
-async def screen_handoff_page(token: str, request: Request) -> Response:
-    _store_for_token, handoff = _find(token, mark_opened=True)
-    if handoff is None:
-        return HTMLResponse("This screen invitation is expired or invalid.", status_code=410,
-                            headers={"Cache-Control": "no-store"})
-    return HTMLResponse(_page(token), headers={"Cache-Control": "no-store"})
+@router.get("/screen-handoff/r/{request_id}")
+async def reopen(request_id: str, request: Request):
+    status = _store().access_status(request_id, request.cookies.get(_COOKIE, ""))
+    return _page(request_id) if status["state"] != "unauthorized" else _error(401, "Utilisez /screen dans votre conversation privée.")
 
 
-@router.post("/screen-handoff/{token}/authorize")
-async def screen_handoff_authorize(token: str, request: Request) -> Response:
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    store, _opened = _find(token)
-    handoff = store.authorize(token, str((body or {}).get("code") or "")) if store else None
-    if handoff is None:
-        return _json_error(403, "invalid or expired confirmation code")
-    cookie = handoff.web_session_token
-    if not cookie:
-        return _json_error(503, "could not establish screen authorization")
-    return _cookie_response(JSONResponse({"success": True, "state": handoff.state}), cookie, request)
+@router.get("/screen-handoff/{token}")
+async def invitation(token: str):
+    row = _store().by_token(token)
+    return _page(row.request_id, token) if row else _error(410, "Invitation expirée ou invalide.")
 
 
-@router.post("/screen-handoff/{token}/refuse")
-async def screen_handoff_refuse(token: str) -> Response:
-    store, handoff = _find(token)
-    if store is None or handoff is None:
-        return _json_error(410, "screen invitation is expired or invalid")
-    store.refuse(token)
-    return JSONResponse({"success": True, "state": "revoked"}, headers={"Cache-Control": "no-store"})
+@router.post("/screen-handoff/{token}/challenge")
+async def challenge(token: str, request: Request):
+    if not _mutation_allowed(request):
+        return _error(403, "Origine refusée.")
+    value = _store().challenge(token, request.cookies.get(_COOKIE, ""))
+    if not value:
+        return _error(409, "Demande indisponible. Utilisez /screen pour renouveler l’accès.")
+    response = JSONResponse({k: value[k] for k in ("code", "expires")}, headers={"Cache-Control": "no-store"})
+    response.set_cookie(_COOKIE, value["cookie"], max_age=32*60, secure=True, httponly=True,
+                        samesite="strict", path=public_path()+"/screen-handoff")
+    return response
 
 
-@router.get("/screen-handoff/{token}/status")
-async def screen_handoff_status(token: str, request: Request) -> Response:
-    _store_for_token, invitation = _find(token)
-    cookie = _cookie(request)
-    if invitation is None or not cookie:
-        return JSONResponse({"success": True, "state": invitation.state if invitation else "unknown"},
-                            headers={"Cache-Control": "no-store"})
-    store, session = _find_session(cookie)
-    if store is None or session is None or session.request_id != invitation.request_id:
-        return JSONResponse({"success": True, "state": invitation.state}, headers={"Cache-Control": "no-store"})
-    return JSONResponse({"success": True, "state": session.state}, headers={"Cache-Control": "no-store"})
+@router.get("/screen-handoff/r/{request_id}/status")
+async def status(request_id: str, request: Request):
+    return JSONResponse(_store().access_status(request_id, request.cookies.get(_COOKIE, "")), headers={"Cache-Control": "no-store"})
 
 
-@router.post("/screen-handoff/{token}/takeover")
-async def screen_handoff_takeover(token: str, request: Request) -> Response:
-    cookie = _cookie(request)
-    store, handoff = _find_session(cookie)
-    if handoff is None:
-        return _json_error(401, "authorization expired")
-    viewer_id = _viewer_id(cookie)
-    try:
-        from tools.bot_desktop import lease
-        lease.acquire(viewer_id, profile_key=handoff.profile_home, reason=handoff.reason)
-        active = store.take_over(cookie, viewer_id)
-        if active is None:
-            lease.release(viewer_id, profile_key=handoff.profile_home)
-            return _json_error(409, "handoff is no longer available")
-        from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
-        ticket = mint_ticket(
-            user_id=viewer_id, provider="bot-desktop-handoff",
-            extra={"hermes_home": handoff.profile_home, "viewer_id": viewer_id,
-                   "handoff_id": handoff.request_id, "retain_on_disconnect": True},
-        )
-        return JSONResponse({"success": True, "state": "human", "display_ticket": ticket},
-                            headers={"Cache-Control": "no-store"})
-    except Exception:
-        logging.getLogger(__name__).exception("screen handoff takeover failed")
-        return _json_error(503, "screen control is unavailable")
+@router.post("/screen-handoff/r/{request_id}/takeover")
+async def takeover(request_id: str, request: Request):
+    if not _mutation_allowed(request):
+        return _error(403, "Origine refusée.")
+    store, row, cookie = _session(request, request_id)
+    if not row:
+        return _error(401, "Autorisation expirée.")
+    from tools.bot_desktop import lease, runtime
+    from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
+    if not runtime.status().running:
+        return _error(409, "Le bureau est arrêté. Relancez le parcours depuis la conversation.")
+    viewer = _viewer_id(cookie)
+    # Persist ownership before acquiring; an interrupted acquisition uses the same viewer.
+    if not store.take_over(cookie, viewer):
+        return _error(409, "Reprise indisponible.")
+    lease.acquire(viewer, profile_key=row.profile_home, reason=row.reason)
+    ticket = mint_ticket(user_id=viewer, provider="bot-desktop-handoff", extra={
+        "hermes_home": row.profile_home, "viewer_id": viewer, "handoff_id": row.request_id,
+        "retain_on_disconnect": True})
+    return JSONResponse({"display_ticket": ticket}, headers={"Cache-Control": "no-store"})
 
 
-@router.post("/screen-handoff/{token}/return")
-async def screen_handoff_return(token: str, request: Request) -> Response:
-    cookie = _cookie(request)
-    store, handoff = _find_any_session(cookie)
-    if handoff is None:
-        return _json_error(401, "authorization expired")
-    viewer_id = _viewer_id(cookie)
+@router.post("/screen-handoff/r/{request_id}/return")
+async def return_control(request_id: str, request: Request):
+    if not _mutation_allowed(request):
+        return _error(403, "Origine refusée.")
+    store, row, cookie = _session(request, request_id, returned=True)
+    if not row:
+        return _error(401, "Autorisation expirée.")
+    if row.state in {"returned", "queued", "resuming", "resumed", "needs_attention"}:
+        return JSONResponse({"state": row.state})
     from tools.bot_desktop import lease
-    if handoff.state == "returned":
-        return JSONResponse({"success": True, "state": "returned"}, headers={"Cache-Control": "no-store"})
-    if not lease.viewer_may_send_input(viewer_id, profile_key=handoff.profile_home):
-        return _json_error(409, "this browser does not hold screen control")
-    lease.release(viewer_id, profile_key=handoff.profile_home)
-    returned = store.return_to_agent(cookie, viewer_id)
-    if returned is None:
-        return _json_error(409, "handoff was already returned")
-    return JSONResponse({"success": True, "state": "returned"}, headers={"Cache-Control": "no-store"})
+    viewer = _viewer_id(cookie)
+    if row.state != "returning" and not lease.viewer_may_send_input(viewer, profile_key=row.profile_home):
+        return _error(409, "Ce navigateur ne détient pas le contrôle.")
+    if not store.return_to_agent(cookie, viewer):
+        return _error(409, "Restitution indisponible.")
+    released = lease.release(viewer, profile_key=row.profile_home)
+    if released.holder != lease.AGENT:
+        return _error(409, "Un autre navigateur détient le contrôle. Restitution en attente.")
+    store.complete_return(request_id)
+    return JSONResponse({"state": "returned"})
 
 
-@router.post("/screen-handoff/{token}/revoke")
-async def screen_handoff_revoke(token: str, request: Request) -> Response:
-    cookie = _cookie(request)
-    store, handoff = _find_any_session(cookie)
-    if handoff is None:
-        return _json_error(401, "authorization expired")
-    viewer_id = _viewer_id(cookie)
-    from tools.bot_desktop import lease
-    if lease.viewer_may_send_input(viewer_id, profile_key=handoff.profile_home):
-        lease.release(viewer_id, profile_key=handoff.profile_home)
-    store.revoke(handoff.request_id)
-    return JSONResponse({"success": True, "state": "revoked"}, headers={"Cache-Control": "no-store"})
+@router.post("/screen-handoff/r/{request_id}/revoke")
+async def revoke(request_id: str, request: Request):
+    if not _mutation_allowed(request):
+        return _error(403, "Origine refusée.")
+    store, row, _ = _session(request, request_id, returned=True)
+    if not row:
+        return _error(401, "Autorisation expirée.")
+    store.revoke(request_id)
+    return JSONResponse({"state": "revoked"})
