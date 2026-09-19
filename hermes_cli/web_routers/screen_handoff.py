@@ -137,6 +137,9 @@ async def takeover(request_id: str, request: Request):
     store, row, cookie = _session(request, request_id)
     if not row:
         return _error(401, "Autorisation expirée.")
+    from gateway.drain_control import drain_requested
+    if drain_requested():
+        return _error(409, "Maintenance en cours. Réessayez après sa fin.")
     from tools.bot_desktop import lease, runtime
     from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
     if not runtime.status().running:

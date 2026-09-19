@@ -66,6 +66,10 @@ def test_return_intent_precedes_release_and_double_click(tmp_path, monkeypatch):
         challenge = store.pending_confirmations()[0]
         store.decide(challenge["id"], platform="telegram", user_id="42", allow=True)
         path = base+"r/"+row.request_id
+        monkeypatch.setattr("gateway.drain_control.drain_requested", lambda: True)
+        assert client.post(path+"/takeover", headers=headers).status_code == 409
+        assert not lease.human_holds(profile_key=store.profile_home)
+        monkeypatch.setattr("gateway.drain_control.drain_requested", lambda: False)
         assert client.post(path+"/takeover", headers=headers).status_code == 200
         assert lease.human_holds(profile_key=store.profile_home)
         release = lease.release
