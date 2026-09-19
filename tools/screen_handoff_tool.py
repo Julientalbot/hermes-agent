@@ -23,7 +23,10 @@ def _check_screen_handoff() -> bool:
         return False
     try:
         from tools.bot_desktop.runtime import status
-        return bool(status().running)
+        # Starting the screen belongs to the explicit request, never to tool
+        # discovery or to opening the private link.  ``installed`` is the
+        # service capability; the handler performs the idempotent start.
+        return bool(status().installed)
     except Exception:
         return False
 
@@ -72,9 +75,10 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
     if not session_key or not has_screen_handoff_notify(session_key):
         return json.dumps({"success": False, "error": "screen handoff is unavailable for this turn"})
     try:
-        from tools.bot_desktop.runtime import status
+        from tools.bot_desktop.runtime import ensure_started_for_tool, status
+        ensure_started_for_tool()
         if not status().running:
-            return json.dumps({"success": False, "error": "Bot Desktop is not running"})
+            return json.dumps({"success": False, "error": "Bot Desktop could not be started"})
     except Exception:
         return json.dumps({"success": False, "error": "Bot Desktop status is unavailable"})
     store = ScreenHandoffStore(profile_home)
