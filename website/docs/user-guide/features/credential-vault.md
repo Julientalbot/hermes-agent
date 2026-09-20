@@ -109,7 +109,7 @@ vault:
 
 ## What this does and does not guarantee
 
-**Does:** the password never enters the model's context through Hermes: not in
+**With the masked Desktop/CLI prompt:** the password never enters the model's context through Hermes: not in
 tool results, logs, the session database, or the CLI arguments of any process.
 Fills happen over the supervised browser session's direct CDP socket and are
 refused unless the page origin exactly matches the saved origin, checked again
