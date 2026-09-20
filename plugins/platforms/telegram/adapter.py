@@ -444,8 +444,6 @@ class TelegramAdapter(BasePlatformAdapter):
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.TELEGRAM)
-        from hermes_constants import get_hermes_home
-        self._screen_profile_home = str(get_hermes_home())
         extra = self.config.extra
         self._app: Optional[Application] = None
         self._bot: Optional[Bot] = None
@@ -3487,57 +3485,6 @@ class TelegramAdapter(BasePlatformAdapter):
         async with self._chat_send_lock(chat_id):
             return await self._send_text_locked(chat_id, content, reply_to, metadata)
 
-    async def send_screen_handoff_prompt(
-        self, chat_id: str, user_id: str, url: str, code: str, reason: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> SendResult:
-        if not self._bot or not str(user_id).strip() or not url:
-            return SendResult(success=False, error="Telegram private delivery unavailable")
-        text = ("🔐 Reprendre le navigateur Hermes\n\n" + _html.escape(str(reason)[:500]) +
-                "\n\nOuvrez le lien, puis demandez l’autorisation. Vous la confirmerez ici. "
-                "Le lien expire dans dix minutes. Aucun mot de passe dans la conversation.")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Ouvrir le navigateur", url=url)]])
-        if (metadata or {}).get("screen_handoff_protocol") == 3:
-            text = (_html.escape(str(reason)[:500]) +
-                    "\n\nConnectez-vous depuis votre ordinateur, puis cliquez sur « Terminé » "
-                    "ou dites-moi « tu peux reprendre ». Le lien expire dans dix minutes.")
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Me connecter", url=url)]])
-        try:
-            msg = await self._send_control_message(str(user_id), text, parse_mode=ParseMode.HTML,
-                reply_markup=keyboard, thread_id=None, metadata=None, reply_to_mode="off")
-            return SendResult(success=True, message_id=str(msg.message_id))
-        except Exception:
-            logger.warning("Telegram private screen invitation delivery failed")
-            return SendResult(success=False, error="Open a private conversation with this bot and ask for a new access link", retryable=True)
-
-    async def send_screen_handoff_confirmation(self, *, user_id: str, challenge_id: str, code: str) -> SendResult:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Autoriser", callback_data=f"sh:allow:{challenge_id}"),
-            InlineKeyboardButton("Refuser", callback_data=f"sh:deny:{challenge_id}"),
-        ]])
-        try:
-            msg = await self._send_control_message(str(user_id),
-                "Autoriser le navigateur qui affiche ce code ?\n<code>" + _html.escape(code) + "</code>\nValable deux minutes.",
-                parse_mode=ParseMode.HTML, reply_markup=keyboard, thread_id=None, metadata=None, reply_to_mode="off")
-            return SendResult(success=True, message_id=str(msg.message_id))
-        except Exception:
-            logger.warning("Telegram screen confirmation delivery failed")
-            return SendResult(success=False, error="private confirmation unavailable")
-
-    async def _handle_screen_handoff_callback(self, query, data, cb):
-        if not await self._callback_authorized(query, cb, "Not authorized"):
-            return
-        parts = data.split(":")
-        user_id = str(query.from_user.id)
-        if len(parts) != 3 or parts[1] not in {"allow", "deny"} or not query.message or str(query.message.chat_id) != user_id:
-            await query.answer("Invalid private confirmation")
-            return
-        from gateway.screen_handoff import ScreenHandoffStore
-        accepted = ScreenHandoffStore(self._screen_profile_home).decide(parts[2], platform="telegram", user_id=user_id, allow=parts[1] == "allow")
-        await query.answer("Autorisation confirmée" if accepted else "Demande expirée ou invalide")
-        if accepted:
-            await query.edit_message_reply_markup(reply_markup=None)
-
     async def _send_text_locked(
         self, chat_id: str, content: str, reply_to: Optional[str], metadata: Optional[Dict[str, Any]]) -> SendResult:
         """``send()`` body under the per-chat lock: rich fast-path, else MarkdownV2 chunks."""
@@ -4528,7 +4475,6 @@ class TelegramAdapter(BasePlatformAdapter):
                     await handler(query, data, chat_id)
                 return
         for prefix, handler in (
-            ("sh:", self._handle_screen_handoff_callback),
             ("gt:", self._handle_gmail_triage_callback), ("ea:", self._handle_exec_approval_callback),
             ("sc:", self._handle_slash_confirm_callback), ("cl:", self._handle_clarify_callback),
             ("update_prompt:", self._handle_update_prompt_callback)):

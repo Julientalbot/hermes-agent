@@ -97,14 +97,6 @@ TOOLSETS = {
         "or keyboard focus. Works with any tool-capable model.",
         ["computer_use"],
     ),
-    "screen_handoff": _ts(
-        "Private human screen access for authenticated Telegram and Discord conversations",
-        ["request_screen_access"],
-    ),
-    "screen_return": _ts(
-        "Explicit return of human screen control by its authenticated private owner",
-        ["return_screen_control"],
-    ),
     "terminal": _ts("Terminal/command execution and process management tools", ["terminal", "process_manage"]),
     "skills": _ts(
         "Access, create, edit, and manage skill documents with specialized "

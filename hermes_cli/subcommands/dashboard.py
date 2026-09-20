@@ -48,7 +48,6 @@ def _add_server_runtime_args(parser) -> None:
 def _configure_serve_parser(parser, *, cmd_dashboard: Callable) -> None:
     """Canonical ``serve`` arguments; shared by the full tree and Desktop's lean hot-path parser."""
     _add_server_runtime_args(parser)
-    parser.add_argument("--screen-only", action="store_true", help="Serve only the private Bot Screen handoff surface")
     # Redundant (serve is always headless) but accepted so legacy callers don't error.
     parser.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(

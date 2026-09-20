@@ -329,24 +329,3 @@ def _get_approval_transport_config() -> tuple[str, str | None]:
         # prompt on a built-in surface the operator may not be watching.
         return "config-error", None
     return selected or "builtin", "builtin" if fallback == "builtin" else None
-
-
-# Set only by the authenticated gateway turn runner, never tool arguments.
-_chat_credentials_allowed = contextvars.ContextVar("chat_credentials_allowed", default=False)
-
-
-def set_chat_credentials_allowed(source, *, internal=False, inbound_id=None):
-    allowed = (str(getattr(source.platform, "value", source.platform)) == "telegram"
-               and source.chat_type in {"dm", "private"}
-               and bool(source.user_id) and str(source.chat_id) == str(source.user_id)
-               and not getattr(source, "is_bot", False)
-               and not internal and str(inbound_id or "").isdigit())
-    return _chat_credentials_allowed.set(allowed)
-
-
-def reset_chat_credentials_allowed(token):
-    _chat_credentials_allowed.reset(token)
-
-
-def chat_credentials_allowed():
-    return _chat_credentials_allowed.get()

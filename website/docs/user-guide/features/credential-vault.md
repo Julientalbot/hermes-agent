@@ -109,7 +109,7 @@ vault:
 
 ## What this does and does not guarantee
 
-**With the masked Desktop/CLI prompt:** the password never enters the model's context through Hermes: not in
+**Does:** the password never enters the model's context through Hermes: not in
 tool results, logs, the session database, or the CLI arguments of any process.
 Fills happen over the supervised browser session's direct CDP socket and are
 refused unless the page origin exactly matches the saved origin, checked again
@@ -122,16 +122,15 @@ other. The origin binding is the guard against filling on the wrong site, not
 against a compromised right one.
 
 
-### Credentials supplied in private Telegram
+### User-supplied credentials
 
-In an authenticated private Telegram conversation, `browser_vault_save_login`
-also accepts `identifier` and `password` together. The agent can request the
-missing login, save the values for the current page origin and fill the password
-without a Desktop prompt or screen takeover. Group conversations, bot messages
-and internal/heartbeat turns cannot use this input path. The normal Desktop/CLI
-masked prompt remains unchanged when the optional values are omitted.
+`browser_vault_save_login` also accepts optional `identifier` and `password`
+together, using the existing origin-bound vault and fill operation. This follows
+the agent's ordinary conversation authorization; there is no separate
+transport or private/group permission. Without supplied values, the existing
+masked Desktop/CLI prompt remains unchanged.
 
-This is an explicit convenience tradeoff: supplied credentials pass through the
-Telegram conversation and model/tool inputs. Encryption in the local vault does
-not erase these prior copies. Tool results do not return the password. Subsequent
-logins can use the saved handle and persistent browser session.
+Unlike masked input, supplied credentials pass through conversation/model/tool
+inputs. Vault encryption does not erase those copies. Do not repeat passwords
+in responses or memory notes. The model-blind protection described above applies
+to the masked input and saved-handle paths, not to supplied credentials.

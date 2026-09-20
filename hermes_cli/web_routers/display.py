@@ -66,7 +66,7 @@ def _consume_display_ticket(ws: WebSocket) -> Optional[dict]:
         info = consume_ticket(ticket)
     except TicketInvalid:
         return None
-    if info.get("provider") not in {"bot-desktop", "bot-desktop-handoff"} or not info.get("hermes_home"):
+    if info.get("provider") != "bot-desktop" or not info.get("hermes_home"):
         return None
     return info
 
@@ -78,25 +78,14 @@ async def display_ws(ws: WebSocket) -> None:
     # state) is refused AFTER accept so the code + reason arrive in a close frame — a close before
     # accept surfaces in the browser as an opaque HTTP 403 and the renderer cannot tell "re-observe"
     # (4401) from "screen is gone" (4001).
-    from gateway.screen_handoff_config import allowed_origin, public_url
-    from urllib.parse import urlsplit
-    screen_only = getattr(ws.app.state, "screen_only", False)
-    permitted = allowed_origin(ws.headers.get("origin", "")) if screen_only else _ws_request_is_allowed(ws)
-    if screen_only:
-        permitted = permitted and ws.headers.get("host") == urlsplit(public_url()).netloc
-    if not permitted:
+    if not _ws_request_is_allowed(ws):
         await ws.close(code=_CLOSE_NOT_ALLOWED)
         return
     await ws.accept()
     info = _consume_display_ticket(ws)
-    if info is None or (screen_only and info.get("provider") != "bot-desktop-handoff"):
+    if info is None:
         await ws.close(code=_CLOSE_BAD_TICKET, reason="display ticket missing, expired or used")
         return
-    if screen_only:
-        from hermes_constants import hermes_home_key
-        if hermes_home_key(info.get("hermes_home")) != hermes_home_key():
-            await ws.close(code=_CLOSE_BAD_TICKET, reason="screen profile mismatch")
-            return
     await _bridge(ws, info)
 
 
@@ -108,13 +97,6 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
     from tools.bot_desktop.rfb_filter import RfbClientFilter
     from pathlib import Path
 
-    handoff_store = None
-    if info.get("provider") == "bot-desktop-handoff":
-        from gateway.screen_handoff import ScreenHandoffStore
-        handoff_store = ScreenHandoffStore(info["hermes_home"])
-        if not handoff_store.stream_valid(info.get("handoff_id", ""), info.get("viewer_id", "")):
-            await ws.close(code=_CLOSE_BAD_TICKET, reason="screen authorization expired")
-            return
     sock = Path(info["hermes_home"]) / "bot-desktop" / "rfb.sock"
     profile_home = str(info["hermes_home"])
     profile_key = hermes_home_key(profile_home)
@@ -205,17 +187,8 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
         await evicted.wait()
         await ws.close(code=_CLOSE_CONTROL_TAKEN, reason="control-taken")
 
-    async def watch_authorization() -> None:
-        while True:
-            await asyncio.sleep(_LEASE_REFRESH_S)
-            if handoff_store and not handoff_store.stream_valid(info.get("handoff_id", ""), viewer_id):
-                await ws.close(code=_CLOSE_BAD_TICKET, reason="screen authorization expired")
-                return
-
     tasks = [asyncio.create_task(rfb_to_ws()), asyncio.create_task(ws_to_rfb()),
              asyncio.create_task(watch_eviction())]
-    if handoff_store:
-        tasks.append(asyncio.create_task(watch_authorization()))
     try:
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
@@ -237,8 +210,7 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
         # Closing the viewer window hands control back. A DROPPED link (laptop lid, Wi-Fi, 1006)
         # keeps the human's exclusion: they may be mid-login on that screen and the agent must not
         # resume into it. The Desktop reconnects into the same lease, or the human hands back.
-        if (viewer_closed.is_set() and not info.get("retain_on_disconnect")
-                and _lease.viewer_may_send_input(viewer_id, profile_key=profile_home)):
+        if viewer_closed.is_set() and _lease.viewer_may_send_input(viewer_id, profile_key=profile_home):
             _lease.release(viewer_id, profile_key=profile_home)
         try:
             await ws.close()

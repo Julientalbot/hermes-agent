@@ -2634,10 +2634,6 @@ def cmd_dashboard(args):
     _ssh_owner_nonce = _dashboard_validate_serve_args(args, _headless_backend, _token_file)
     _dashboard_sanitize_desktop_env(_headless_backend)
 
-    if getattr(args, "screen_only", False):
-        from hermes_cli.screen_server import start_screen_server
-        return start_screen_server(args.host, args.port)
-
     _route_named_profile_dashboard(args, _headless_backend, _ssh_owner_nonce, _token_file)
 
     # Apply the final process/profile policy after dashboard routing, but before
