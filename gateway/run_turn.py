@@ -2298,10 +2298,17 @@ class GatewayTurnMixin:
         enabled = set(_get_platform_tools(user_config, platform_key))
         # Channel identity belongs here, not in a process-wide tool check.
         enabled.discard("screen_handoff")
+        enabled.discard("screen_return")
         handoff = (user_config.get("bot_desktop") or {}).get("handoff") or {}
         if (platform_key in {"telegram", "discord"} and source.user_id
                 and handoff.get("enabled") is True and handoff.get("public_url")):
             enabled.add("screen_handoff")
+            if platform_key == "telegram" and source.chat_type in {"dm", "private"}:
+                from gateway.screen_handoff import ScreenHandoffStore
+                from gateway.screen_handoff_return import owner_handoff, RETURNED_STATES
+                active = owner_handoff(ScreenHandoffStore(), source)
+                if active and active.state not in RETURNED_STATES:
+                    enabled.add("screen_return")
         return sorted(enabled)
 
     def _resolve_turn_toolsets(self, user_config: dict, source: "SessionSource", platform_key: str):
@@ -2344,6 +2351,7 @@ class GatewayTurnMixin:
 
             platform_key = _platform_config_key(source.platform)
             enabled_toolsets, disabled_toolsets = self._resolve_turn_toolsets(user_config, source, platform_key)
+            enabled_toolsets = [name for name in enabled_toolsets if name != "screen_return"]
             pr = self._provider_routing
             max_iterations = _current_max_iterations()
             reasoning_config = self._resolve_session_reasoning_config(source=source, model=model)
@@ -4142,6 +4150,9 @@ class GatewayTurnMixin:
         from run_agent import AIAgent
 
         disp = self._run_agent_display_settings(source)
+        if scheduled_heartbeat or persist_user_display_kind or not str(inbound_message_id or "").isdigit():
+            disp = dataclasses.replace(disp, enabled_toolsets=[
+                name for name in disp.enabled_toolsets if name != "screen_return"])
         if scheduled_heartbeat:
             # A heartbeat is proactive work: tool chrome, drafts, thinking and periodic
             # liveness notices would create a user-visible ping before its final result is known.

@@ -3497,13 +3497,18 @@ class TelegramAdapter(BasePlatformAdapter):
                 "\n\nOuvrez le lien, puis demandez l’autorisation. Vous la confirmerez ici. "
                 "Le lien expire dans dix minutes. Aucun mot de passe dans la conversation.")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Ouvrir le navigateur", url=url)]])
+        if (metadata or {}).get("screen_handoff_protocol") == 3:
+            text = (_html.escape(str(reason)[:500]) +
+                    "\n\nConnectez-vous depuis votre ordinateur, puis cliquez sur « Terminé » "
+                    "ou dites-moi « tu peux reprendre ». Le lien expire dans dix minutes.")
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Me connecter", url=url)]])
         try:
             msg = await self._send_control_message(str(user_id), text, parse_mode=ParseMode.HTML,
                 reply_markup=keyboard, thread_id=None, metadata=None, reply_to_mode="off")
             return SendResult(success=True, message_id=str(msg.message_id))
         except Exception:
             logger.warning("Telegram private screen invitation delivery failed")
-            return SendResult(success=False, error="Open a private conversation with this bot, then use /screen", retryable=True)
+            return SendResult(success=False, error="Open a private conversation with this bot and ask for a new access link", retryable=True)
 
     async def send_screen_handoff_confirmation(self, *, user_id: str, challenge_id: str, code: str) -> SendResult:
         keyboard = InlineKeyboardMarkup([[

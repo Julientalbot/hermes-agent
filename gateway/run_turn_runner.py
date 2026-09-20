@@ -1554,7 +1554,7 @@ class TurnRunner:
                 url=str(handoff.get("invite_url") or ""),
                 code=str(handoff.get("confirmation_code") or ""),
                 reason=str(handoff.get("reason") or ""),
-                metadata=metadata,
+                metadata={**(metadata or {}), "screen_handoff_protocol": handoff.get("protocol", 2)},
             ),
             "screen handoff private delivery failed to schedule",
         )
@@ -1737,6 +1737,10 @@ class TurnRunner:
         token = set_current_session_key(session_key)
         register_gateway_notify(session_key, self._approval_notify_sync)
         register_screen_handoff_notify(session_key, self._screen_handoff_notify_sync)
+        from gateway.screen_handoff_return import register_return, unregister_return, return_from_owner_message
+        register_return(session_key, lambda: return_from_owner_message(
+            ctx.source, ctx.message, internal=bool(ctx.persist_user_display_kind or ctx.scheduled_heartbeat),
+            inbound_id=ctx.inbound_message_id))
         try:
             api_message = _wrap_current_message_with_observed_context(self._native_image_run_message(), observed_group_context)
             kwargs = {"conversation_history": agent_history, "task_id": ctx.session_id}
@@ -1768,6 +1772,7 @@ class TurnRunner:
         finally:
             unregister_gateway_notify(session_key)
             unregister_screen_handoff_notify(session_key)
+            unregister_return(session_key)
             # Cancel pending clarify entries so blocked agent threads don't hang past the end of the
             # run (interrupt, completion, gateway shutdown). Idempotent.
             with suppress(Exception):

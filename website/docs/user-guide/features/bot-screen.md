@@ -250,7 +250,15 @@ Xauthority, launcher log, per-profile xfconf).
 `request_screen_access(reason)` sends an invitation in a private message and
 returns immediately. It never takes control or waits for the person, and its
 result contains no usable link. Opening the invitation does not authorize the
-browser. The person requests confirmation on the page, compares its code with
+browser. With Telegram Login configured, **Continue with Telegram** authenticates
+the requesting owner and expresses their intent to take control, then opens the
+screen directly. The official SDK's signed ID token is verified server-side against
+Telegram's public keys, issuer, audience, expiry, numeric owner ID and a one-use
+nonce bound to this request and browser. No bot token or OAuth client secret is
+needed by the screen service.
+
+Discord and existing requests keep their original protocol. Without Telegram
+Login configured, the person requests confirmation on the page, compares its code with
 the private message, approves there, then explicitly takes control on the page.
 The messaging adapter checks the real user identity; typing the comparison
 code into a page cannot authorize access. A failed private delivery never
@@ -286,6 +294,7 @@ bot_desktop:
     enabled: true
     public_url: https://agent.example/handoff/my-deployment
     local_port: 8766
+    telegram_login_client_id: "123456789"  # public Client ID from BotFather
 ```
 
 ```bash
@@ -302,6 +311,17 @@ invitation and WebSocket ticket URLs. noVNC must be available in the Desktop
 package's `node_modules/@novnc/novnc` or in
 `/opt/hermes-screen/node_modules/@novnc/novnc`; nothing is installed on a request.
 `local_port` is the read-only readiness probe port and must match the server.
+
+For Telegram Login, register the public HTTPS origin in **BotFather → Login
+Widget → Allowed URLs** and use its public Client ID above. Keep the default
+RS256 signing algorithm. Only the `profile` scope is requested: no phone number
+or permission to send messages. The official SDK runs from `oauth.telegram.org`;
+the proxy must preserve the page's CSP and `same-origin-allow-popups` opener
+policy. This browser SDK flow does not use the OIDC client-secret/code-exchange
+flow. See [Telegram Login](https://core.telegram.org/bots/telegram-login).
+New requests use protocol 3; existing requests retain their protocol when
+reissued. A configured protocol-3 request never falls back to the code ceremony
+if login fails or its configuration is removed.
 
 The tool belongs to `screen_handoff`, enabled only for configured Telegram and
 Discord sources with an authenticated user. `agent.disabled_toolsets` can
@@ -322,7 +342,7 @@ blocker. It uses the existing owner-bound reissue protocol, preserves the origin
 conversation and human lease, and does not read or manipulate the browser. The user
 need not type `/screen`; that command remains an optional shortcut.
 
-**Return control and continue** records intent before releasing the existing
+**Done** records intent before releasing the existing
 Bot Desktop lease. The gateway admits the original session's continuation once,
 deduplicated by request ID, and asks it to reobserve the browser. A restart
 reconciles pending returns and queued admissions. An interrupted admitted turn
@@ -330,6 +350,15 @@ is marked `needs_attention` and is not automatically replayed; inspect the
 original conversation before continuing. Returning control does not prove login
 succeeded and does not authorize a new action. Desktop's intentional close
 behavior remains unchanged.
+
+In a private Telegram conversation, the authenticated owner can also explicitly
+say “you can resume” or “c’est bon, tu peux reprendre”. The agent uses the
+argument-free `return_screen_control()` tool, available for a matching active
+intervention, then ends its turn. The current inbound owner message is checked
+again at execution: a bare “OK”, quotation, page content or internal notification
+cannot authorize return. Both paths share the same durable operation and resume
+the original conversation, including an originating group or topic. This is
+independent of the temporary page access and works after it expires.
 
 This uses Bot Screen's tool-level lease, not isolation from processes running
 under the same system user. Credentials stay in the displayed browser rather

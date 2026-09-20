@@ -20,6 +20,18 @@ def public_path() -> str:
     return urlsplit(public_url()).path.rstrip("/")
 
 
+def telegram_login_client_id() -> str:
+    from hermes_cli.config import load_config_readonly
+    cfg = (load_config_readonly().get("bot_desktop") or {}).get("handoff") or {}
+    raw = cfg.get("telegram_login_client_id")
+    if raw is None or raw == "":
+        return ""
+    value = str(raw)
+    if value.isascii() and value.isdigit() and int(value) > 0:
+        return value
+    raise ValueError("bot_desktop.handoff.telegram_login_client_id must be a positive application id")
+
+
 def allowed_origin(origin: str) -> bool:
     url = urlsplit(public_url())
     return bool(url.netloc and origin == f"{url.scheme}://{url.netloc}")

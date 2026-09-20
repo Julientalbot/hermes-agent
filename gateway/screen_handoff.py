@@ -69,6 +69,7 @@ class Handoff:
     viewer_id: Optional[str]
     # One-time response value; never persisted and never included by public().
     web_session_token: str = ""
+    protocol: int = 2
 
     def public(self) -> dict[str, Any]:
         """Model/gateway-safe representation; excludes the invite and confirmation secrets."""
@@ -83,6 +84,7 @@ class Handoff:
             "confirmation_expires_at": self.confirmation_expires_at,
             "web_expires_at": self.web_expires_at,
             "viewer_id": self.viewer_id,
+            "protocol": self.protocol,
         }
 
 
@@ -137,6 +139,11 @@ class ScreenHandoffStore:
                 decision TEXT, delivered REAL, attempts INTEGER NOT NULL DEFAULT 0,
                 next_delivery REAL NOT NULL DEFAULT 0
             )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS screen_login_attempts (
+                nonce_digest TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                browser_digest TEXT NOT NULL, created REAL NOT NULL,
+                expires REAL NOT NULL, consumed_at REAL
+            )""")
             # Codes are visual comparison labels, never authorization credentials.
             # Browser/invitation/session bearer values persist only as digests.
             conn.execute(
@@ -157,6 +164,7 @@ class ScreenHandoffStore:
             confirmation_expires_at=float(row["confirmation_expires_at"]),
             web_expires_at=float(row["web_expires_at"]) if row["web_expires_at"] is not None else None,
             viewer_id=row["viewer_id"], web_session_token=web_session_token,
+            protocol=row["protocol"],
         )
 
     def _expire(self, conn: sqlite3.Connection, now: float) -> None:
@@ -174,9 +182,11 @@ class ScreenHandoffStore:
             return self._row(conn.execute("SELECT * FROM screen_handoffs WHERE request_id=? AND profile_home=?",
                                           (request_id, self.profile_home)).fetchone())
 
-    def create_or_get(self, *, session_id: str, source_json: str, reason: str) -> tuple[Handoff, bool]:
+    def create_or_get(self, *, session_id: str, source_json: str, reason: str, protocol: int = 2) -> tuple[Handoff, bool]:
         if not session_id:
             raise ValueError("screen handoff requires a session id")
+        if protocol not in {2, 3} or (protocol == 3 and self._owner(source_json)[0] != "telegram"):
+            raise ValueError("unsupported screen authorization protocol")
         now = _now()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -200,9 +210,9 @@ class ScreenHandoffStore:
             conn.execute(
                 "INSERT INTO screen_handoffs(request_id, invite_digest, confirmation_digest, state, session_id, "
                 "profile_home, source_json, reason, created_at, invite_expires_at, confirmation_expires_at, protocol) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,2)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (request_id, _digest(invite_token), _digest(code), "pending", str(session_id), self.profile_home,
-                 source_json, str(reason or "").strip()[:500], now, invite_expires, confirmation_expires),
+                 source_json, str(reason or "").strip()[:500], now, invite_expires, confirmation_expires, protocol),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM screen_handoffs WHERE request_id=?", (request_id,)).fetchone()
@@ -224,7 +234,9 @@ class ScreenHandoffStore:
                 conn.commit()
                 return None
             conn.execute("UPDATE screen_confirmations SET decision='superseded' WHERE request_id=? AND decision IS NULL", (row["request_id"],))
-            conn.execute("UPDATE screen_handoffs SET invite_digest=?, protocol=2, web_session_digest=NULL, "
+            conn.execute("UPDATE screen_login_attempts SET consumed_at=? WHERE request_id=? AND consumed_at IS NULL",
+                         (now, row["request_id"]))
+            conn.execute("UPDATE screen_handoffs SET invite_digest=?, web_session_digest=NULL, "
                          "state='pending', invite_expires_at=?, confirmation_expires_at=0, web_expires_at=NULL, "
                          "opened_at=NULL, authorized_at=NULL, last_error=NULL WHERE request_id=?",
                          (_digest(invite_token), now + INVITE_TTL_SECONDS, row["request_id"]))
@@ -240,7 +252,7 @@ class ScreenHandoffStore:
             conn.execute("BEGIN IMMEDIATE") if mark_opened else None
             self._expire(conn, now)
             row = conn.execute("SELECT * FROM screen_handoffs WHERE invite_digest=?", (_digest(token),)).fetchone()
-            if row is None or row["protocol"] != 2 or row["invite_expires_at"] <= now or row["state"] in {"expired", "revoked", "resumed"}:
+            if row is None or row["protocol"] not in {2, 3} or row["profile_home"] != self.profile_home or row["invite_expires_at"] <= now or row["state"] in {"expired", "revoked", "resumed"}:
                 if mark_opened:
                     conn.commit()
                 return None
@@ -345,7 +357,7 @@ class ScreenHandoffStore:
         with self._connect() as conn:
             self._expire(conn, now)
             row = conn.execute("SELECT * FROM screen_handoffs WHERE web_session_digest=?", (_digest(token),)).fetchone()
-        if row is None or row["protocol"] != 2 or row["state"] not in {"authorized", "human"} or row["web_expires_at"] is None or float(row["web_expires_at"]) <= now:
+        if row is None or row["protocol"] not in {2, 3} or row["profile_home"] != self.profile_home or row["state"] not in {"authorized", "human"} or row["web_expires_at"] is None or float(row["web_expires_at"]) <= now:
             return None
         return self._row(row)
 
@@ -357,7 +369,7 @@ class ScreenHandoffStore:
         with self._connect() as conn:
             self._expire(conn, now)
             row = conn.execute("SELECT * FROM screen_handoffs WHERE web_session_digest=?", (_digest(token),)).fetchone()
-        if row is None or row["protocol"] != 2 or row["state"] in {"expired", "revoked"} or row["web_expires_at"] is None or float(row["web_expires_at"]) <= now:
+        if row is None or row["protocol"] not in {2, 3} or row["profile_home"] != self.profile_home or row["state"] in {"expired", "revoked"} or row["web_expires_at"] is None or float(row["web_expires_at"]) <= now:
             return None
         return self._row(row)
 
