@@ -123,7 +123,9 @@ registry.register(
             "First put the shared browser on the required page. Give the task and short intervention needed, without secrets. "
             "This returns immediately and does not take control. After successful private delivery, briefly tell the user "
             "to use their computer and END THIS TURN: no polling, waiting, or further navigation. "
-            "If delivery fails, explain the failure. After control is returned, reobserve before continuing the original task; "
+            "If delivery fails, explain the failure; logging in through the user’s personal browser will not authenticate "
+            "this shared browser, so do not offer a normal site link as a substitute. "
+            "After control is returned, reobserve before continuing the original task; "
             "returning control does not prove login or authorize new actions. Never ask for a password in chat."
         ),
         "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]},
