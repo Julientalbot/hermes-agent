@@ -82,7 +82,20 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
     store = ScreenHandoffStore(profile_home)
     handoff, created = None, False
     try:
-        handoff, created = store.create_or_get(session_id=session_id, source_json=origin_json, reason=reason)
+        # Private recovery uses the existing owner-bound protocol and preserves
+        # the original conversation, even if the owner starts a new DM session.
+        source = json.loads(origin_json)
+        if source.get("chat_type") in {"dm", "private"}:
+            handoff = store.reissue(session_id=session_id, source_json=origin_json, reason=reason)
+        if handoff is None:
+            handoff, created = store.create_or_get(session_id=session_id, source_json=origin_json, reason=reason)
+            if not created:
+                if handoff.state in {"returning", "returned", "queued", "resuming", "needs_attention"}:
+                    return json.dumps({"success": False, "state": handoff.state,
+                                       "error": "The previous return is being processed or needs attention; no new invitation was sent."})
+                handoff = store.reissue(session_id=session_id, source_json=origin_json, reason=reason)
+                if handoff is None:
+                    return json.dumps({"success": False, "error": "Screen recovery is unavailable for this conversation."})
         if created:
             from tools.bot_desktop.browser import present_running_browser
             from tools.browser_tool_session import run_fenced
@@ -90,15 +103,16 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
             if not prepared.get("success"):
                 store.revoke(handoff.request_id)
                 return json.dumps(prepared)
-            public_url = _public_url()
-            delivered = notify_screen_handoff(session_key, {
-                **handoff.public(), "invite_token": handoff.invite_token,
-                "confirmation_code": handoff.confirmation_code,
-                "invite_url": f"{public_url}/screen-handoff/{handoff.invite_token}",
-            })
-            if not delivered:
-                store.revoke(handoff.request_id)
-                return json.dumps({"success": False, "error": "private delivery is unavailable"})
+        # Recovery never touches the browser or releases its human ownership.
+        public_url = _public_url()
+        delivered = notify_screen_handoff(session_key, {
+            **handoff.public(), "invite_token": handoff.invite_token,
+            "confirmation_code": handoff.confirmation_code,
+            "invite_url": f"{public_url}/screen-handoff/{handoff.invite_token}",
+        })
+        if not delivered:
+            store.revoke(handoff.request_id)
+            return json.dumps({"success": False, "error": "private delivery is unavailable"})
         return json.dumps({
             "success": True, "state": handoff.state, "request_id": handoff.request_id,
             "expires_at": handoff.invite_expires_at, "delivery": "private",
@@ -120,7 +134,11 @@ registry.register(
         "description": (
             "Ask the authenticated user to take over the Bot Desktop browser in a private Telegram "
             "or Discord message, only for an observed human-only blocker such as login or two-factor authentication. "
-            "First put the shared browser on the required page. Give the task and short intervention needed, without secrets. "
+            "For a new intervention, first put the shared browser on the required page. "
+            "Also use this tool once when the user asks to recover access or browser actions report human control: "
+            "it sends a fresh private recovery button without navigating, reading the screen or releasing control. "
+            "Do not ask the user to type a slash command. They authorize the recovered page and explicitly return control there. "
+            "Give the task and short intervention needed, without secrets. "
             "This returns immediately and does not take control. After successful private delivery, briefly tell the user "
             "to use their computer and END THIS TURN: no polling, waiting, or further navigation. "
             "If delivery fails, explain the failure; logging in through the user’s personal browser will not authenticate "

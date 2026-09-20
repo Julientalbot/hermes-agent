@@ -316,7 +316,11 @@ an already open stream; disconnecting, closing the web page, or losing access
 does **not** return control. The owner can use `/screen` in a private message
 to reauthorize access while retaining the original conversation, including a
 group or topic. The gateway delivers persisted confirmation requests even after
-the initiating agent turn ends.
+the initiating agent turn ends. The same `request_screen_access(reason)` tool can
+renew the private recovery invitation after a natural-language request or a human-control
+blocker. It uses the existing owner-bound reissue protocol, preserves the original
+conversation and human lease, and does not read or manipulate the browser. The user
+need not type `/screen`; that command remains an optional shortcut.
 
 **Return control and continue** records intent before releasing the existing
 Bot Desktop lease. The gateway admits the original session's continuation once,
