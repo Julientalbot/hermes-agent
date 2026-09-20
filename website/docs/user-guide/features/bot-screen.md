@@ -256,6 +256,25 @@ The messaging adapter checks the real user identity; typing the comparison
 code into a page cannot authorize access. A failed private delivery never
 publishes the link in the originating group.
 
+This web flow is intended for short interventions on a computer: logging in,
+completing two-factor authentication, or another observed human-only step. The
+agent first opens the useful page in its shared browser. A successful invitation
+instructs it to finish its turn normally, without polling or further navigation;
+there is no special engine termination. Validate that behavior with your model.
+Delivery failure is reported instead of claiming that an invitation was sent.
+
+Before delivery, the tool raises and maximizes the selected page's existing
+Chromium window through the shared profile's local CDP endpoint. It does not
+launch a browser, replace the profile, close tabs, or alter Xfce. If the browser
+is missing or no unambiguous selected page is visible, the tool reports the
+blockage without sending an invitation. The normal human-control fence applies.
+
+The web viewport fills the space under a compact control bar. noVNC scales the
+image (`scaleViewport=true`) without resizing the remote session
+(`resizeSession=false`); the configured desktop geometry remains stable (normally
+1440×900). Browser tabs and the address bar remain visible. There are no mobile
+keyboard, zoom, or window-management controls in this first web version.
+
 Install the graphical packages and noVNC during deployment, then configure the
 same profile used by the messaging gateway:
 

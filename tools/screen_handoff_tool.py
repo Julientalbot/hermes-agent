@@ -80,9 +80,16 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
     if not status().running:
         return json.dumps({"success": False, "error": "Bot Desktop is stopped; check auto_start and its resource requirements"})
     store = ScreenHandoffStore(profile_home)
+    handoff, created = None, False
     try:
         handoff, created = store.create_or_get(session_id=session_id, source_json=origin_json, reason=reason)
         if created:
+            from tools.bot_desktop.browser import present_running_browser
+            from tools.browser_tool_session import run_fenced
+            prepared = run_fenced({"features": {"local": True}}, present_running_browser)
+            if not prepared.get("success"):
+                store.revoke(handoff.request_id)
+                return json.dumps(prepared)
             public_url = _public_url()
             delivered = notify_screen_handoff(session_key, {
                 **handoff.public(), "invite_token": handoff.invite_token,
@@ -96,8 +103,11 @@ def request_screen_access(args: dict[str, Any], *, session_id: str = "", **_kwar
             "success": True, "state": handoff.state, "request_id": handoff.request_id,
             "expires_at": handoff.invite_expires_at, "delivery": "private",
             "reused": not created,
+            "next_step": "End this turn now. Do not poll, wait, or perform further browser actions. Resume only after the user returns control, then reobserve the page.",
         })
     except Exception as exc:
+        if created and handoff is not None:
+            store.revoke(handoff.request_id)
         logger.warning("screen handoff request failed (%s)", type(exc).__name__)
         return json.dumps({"success": False, "error": f"screen handoff failed: {type(exc).__name__}"})
 
@@ -109,7 +119,12 @@ registry.register(
         "name": "request_screen_access",
         "description": (
             "Ask the authenticated user to take over the Bot Desktop browser in a private Telegram "
-            "or Discord message. This returns immediately; never ask for a password in chat."
+            "or Discord message, only for an observed human-only blocker such as login or two-factor authentication. "
+            "First put the shared browser on the required page. Give the task and short intervention needed, without secrets. "
+            "This returns immediately and does not take control. After successful private delivery, briefly tell the user "
+            "to use their computer and END THIS TURN: no polling, waiting, or further navigation. "
+            "If delivery fails, explain the failure. After control is returned, reobserve before continuing the original task; "
+            "returning control does not prove login or authorize new actions. Never ask for a password in chat."
         ),
         "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]},
     },

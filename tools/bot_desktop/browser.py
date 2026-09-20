@@ -174,3 +174,70 @@ def env_for_agent(env: dict) -> dict:
     if exe:
         env.setdefault("AGENT_BROWSER_EXECUTABLE_PATH", exe)
     return env
+
+
+def present_running_browser() -> dict:
+    """Raise the selected tab of this profile's existing window; never launch or navigate.
+
+    Discover only through the shared profile, not a configured external CDP endpoint.
+    An ambiguous multi-window desktop is left untouched so the agent can select its page.
+    The caller must apply the normal Bot Desktop lease fence.
+    """
+    import json
+    import re
+    import time
+    from websockets.sync.client import connect
+    from agent.proxy_bypass import loopback_connect_kwargs
+
+    try:
+        profile = profile_dir()
+        port = running_instance_cdp_port(str(profile))
+        lines = (profile / "DevToolsActivePort").read_text().splitlines()
+        if not port or int(lines[0]) != port or not re.fullmatch(r"/devtools/browser/[A-Za-z0-9-]+", lines[1]):
+            raise ValueError("missing browser")
+        url = f"ws://127.0.0.1:{port}{lines[1]}"
+    except (OSError, ValueError, IndexError):
+        return {"success": False, "error": "Open the required page in the shared browser before requesting screen access."}
+    try:
+        deadline = time.monotonic() + 5
+        with connect(url, open_timeout=2, close_timeout=1, max_size=2**20,
+                     **loopback_connect_kwargs(url)) as ws:
+            sequence = 0
+
+            def cdp(method, params=None, session=None):
+                nonlocal sequence
+                sequence += 1
+                msg = {"id": sequence, "method": method, "params": params or {}}
+                if session:
+                    msg["sessionId"] = session
+                ws.send(json.dumps(msg))
+                while True:
+                    reply = json.loads(ws.recv(timeout=max(0, deadline - time.monotonic())))
+                    if reply.get("id") == sequence:
+                        if "error" in reply:
+                            raise RuntimeError("window unavailable")
+                        return reply.get("result", {})
+
+            pages = [p for p in cdp("Target.getTargets").get("targetInfos", [])
+                     if p.get("type") == "page" and not p.get("url", "").startswith("devtools://")]
+            selected = []
+            for page in pages:
+                tid = page["targetId"]
+                sid = cdp("Target.attachToTarget", {"targetId": tid, "flatten": True})["sessionId"]
+                try:
+                    state = cdp("Runtime.evaluate", {"expression": "document.visibilityState === 'visible'",
+                                                    "returnByValue": True}, sid)
+                    if state.get("result", {}).get("value") is True:
+                        selected.append(tid)
+                finally:
+                    cdp("Target.detachFromTarget", {"sessionId": sid})
+            if len(selected) != 1:
+                return {"success": False, "error": "Select the required page in the shared browser before requesting screen access."}
+            tid = selected[0]
+            window = cdp("Browser.getWindowForTarget", {"targetId": tid})["windowId"]
+            cdp("Browser.setWindowBounds", {"windowId": window, "bounds": {"windowState": "maximized"}})
+            cdp("Target.activateTarget", {"targetId": tid})
+        return {"success": True}
+    except Exception:
+        # CDP errors can contain page URLs or secrets. Never return their raw text.
+        return {"success": False, "error": "The shared browser could not be presented. No invitation was sent."}
