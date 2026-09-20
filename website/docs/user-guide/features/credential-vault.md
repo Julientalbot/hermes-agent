@@ -120,3 +120,18 @@ site, that site (and any script it runs) has it, exactly as when you type it
 yourself. On a cloud browser backend the vendor's browser sees the page like any
 other. The origin binding is the guard against filling on the wrong site, not
 against a compromised right one.
+
+
+### Credentials supplied in private Telegram
+
+In an authenticated private Telegram conversation, `browser_vault_save_login`
+also accepts `identifier` and `password` together. The agent can request the
+missing login, save the values for the current page origin and fill the password
+without a Desktop prompt or screen takeover. Group conversations, bot messages
+and internal/heartbeat turns cannot use this input path. The normal Desktop/CLI
+masked prompt remains unchanged when the optional values are omitted.
+
+This is an explicit convenience tradeoff: supplied credentials pass through the
+Telegram conversation and model/tool inputs. Encryption in the local vault does
+not erase these prior copies. Tool results do not return the password. Subsequent
+logins can use the saved handle and persistent browser session.

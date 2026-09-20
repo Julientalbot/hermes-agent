@@ -1741,6 +1741,10 @@ class TurnRunner:
         register_return(session_key, lambda: return_from_owner_message(
             ctx.source, ctx.message, internal=bool(ctx.persist_user_display_kind or ctx.scheduled_heartbeat),
             inbound_id=ctx.inbound_message_id))
+        from tools.approval_context import set_chat_credentials_allowed, reset_chat_credentials_allowed
+        credentials_token = set_chat_credentials_allowed(
+            ctx.source, internal=bool(ctx.persist_user_display_kind or ctx.scheduled_heartbeat),
+            inbound_id=ctx.inbound_message_id)
         try:
             api_message = _wrap_current_message_with_observed_context(self._native_image_run_message(), observed_group_context)
             kwargs = {"conversation_history": agent_history, "task_id": ctx.session_id}
@@ -1773,6 +1777,7 @@ class TurnRunner:
             unregister_gateway_notify(session_key)
             unregister_screen_handoff_notify(session_key)
             unregister_return(session_key)
+            reset_chat_credentials_allowed(credentials_token)
             # Cancel pending clarify entries so blocked agent threads don't hang past the end of the
             # run (interrupt, completion, gateway shutdown). Idempotent.
             with suppress(Exception):

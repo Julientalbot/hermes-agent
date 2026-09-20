@@ -866,3 +866,55 @@ class TestTwoFactor:
              patch.object(browser_vault_tool, "_eval_js", side_effect=fake_eval):
             out = json.loads(browser_vault_tool.browser_vault_enter_code(task_id="t"))
         assert out["error_type"] == "no_code_field" and "device" in out["error"]
+
+class TestPrivateChatLogin:
+    def test_supplied_login_requires_real_private_telegram_turn(self, store, monkeypatch):
+        from types import SimpleNamespace
+        from tools import approval_context as ctx, browser_vault_tool as tool
+        monkeypatch.setattr(tool, '_focus_bound_origin', lambda *a: None)
+        monkeypatch.setattr(tool, '_current_page_origin', lambda *a: 'https://acme.test')
+        monkeypatch.setattr(tool, 'browser_vault_fill', lambda *a, **k: json.dumps({'success': True}))
+        source = dict(platform='telegram', chat_type='dm', user_id='123', chat_id='123', is_bot=False)
+        with patch('agent.vault_store.get_vault_store', return_value=store):
+            for changes, internal, inbound in [({'chat_type': 'group'}, False, '1'), ({'platform': 'discord'}, False, '1'), ({'chat_id': '456'}, False, '1'), ({'is_bot': True}, False, '1'), ({}, True, '1'), ({}, False, None)]:
+                token = ctx.set_chat_credentials_allowed(SimpleNamespace(**{**source, **changes}), internal=internal, inbound_id=inbound)
+                try:
+                    assert json.loads(tool.browser_vault_save_login(identifier='qa', password='test-only-secret'))['error_type'] == 'private_chat_required'
+                finally:
+                    ctx.reset_chat_credentials_allowed(token)
+            assert store.list_items() == []
+            token = ctx.set_chat_credentials_allowed(SimpleNamespace(**source), inbound_id='1')
+            try:
+                assert json.loads(tool.browser_vault_save_login(identifier='qa'))['error_type'] == 'credentials_incomplete'
+                raw = tool.browser_vault_save_login(identifier='qa', password='test-only-secret')
+                assert json.loads(raw)['success'] is True
+                assert 'test-only-secret' not in raw
+                [item] = store.list_items()
+                assert item.origin == 'https://acme.test' and item.identifier == 'qa'
+            finally:
+                ctx.reset_chat_credentials_allowed(token)
+            assert not ctx.chat_credentials_allowed()
+
+    def test_save_error_never_echoes_secret(self, monkeypatch):
+        from tools import browser_vault_tool as tool
+        monkeypatch.setattr('tools.approval_context.chat_credentials_allowed', lambda: True)
+        monkeypatch.setattr(tool, '_focus_bound_origin', lambda *a: None)
+        monkeypatch.setattr(tool, '_current_page_origin', lambda *a: 'https://acme.test')
+        with patch('agent.vault_store.get_vault_store') as get_store:
+            get_store.return_value.add_item.side_effect = ValueError('test-only-secret')
+            raw = tool.browser_vault_save_login(identifier='qa', password='test-only-secret')
+        assert json.loads(raw)['error_type'] == 'save_failed'
+        assert 'test-only-secret' not in raw
+
+    def test_authorization_propagates_to_tool_worker_but_not_next_turn(self):
+        from types import SimpleNamespace
+        from tools import approval_context as ctx
+        from tools.daemon_pool import DaemonThreadPoolExecutor
+        source = SimpleNamespace(platform='telegram', chat_type='dm', user_id='123', chat_id='123', is_bot=False)
+        with DaemonThreadPoolExecutor(max_workers=1) as pool:
+            token = ctx.set_chat_credentials_allowed(source, inbound_id='1')
+            try:
+                assert pool.submit(ctx.chat_credentials_allowed).result() is True
+            finally:
+                ctx.reset_chat_credentials_allowed(token)
+            assert pool.submit(ctx.chat_credentials_allowed).result() is False

@@ -147,7 +147,7 @@ registry.register(
             "If delivery fails, explain the failure; logging in through the user’s personal browser will not authenticate "
             "this shared browser, so do not offer a normal site link as a substitute. "
             "After control is returned, reobserve before continuing the original task; "
-            "returning control does not prove login or authorize new actions. Never ask for a password in chat."
+            "returning control does not prove login or authorize new actions. Never include credentials in the invitation."
         ),
         "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]},
     },
