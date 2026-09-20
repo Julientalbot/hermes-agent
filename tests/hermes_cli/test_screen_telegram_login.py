@@ -162,3 +162,20 @@ def test_bad_claims_never_authorize_or_downgrade(tmp_path, monkeypatch, changes)
         assert store.get(row.request_id).state == "opened"
         assert store.get(row.request_id).protocol == 3
         assert store.pending_confirmations() == []
+
+
+def test_login_failure_diagnostic_does_not_expose_token_or_exception(tmp_path, monkeypatch, caplog):
+    app, store, row = setup_app(tmp_path, "diagnostic")
+    def reject(*args, **kwargs):
+        raise jwt.InvalidAudienceError("PRIVATE_PROVIDER_DETAILS")
+    monkeypatch.setattr("gateway.screen_handoff_login.complete_login", reject)
+    with TestClient(app, base_url="https://screen.example") as client:
+        base="/handoff/diagnostic/screen-handoff/"
+        response=client.post(base+"r/"+row.request_id+"/telegram/complete", headers=HEADERS,
+                             json={"nonce":"synthetic", "id_token":"PRIVATE_TOKEN"})
+    assert response.status_code == 401
+    assert "InvalidAudienceError" in response.text
+    assert "InvalidAudienceError" in caplog.text
+    for secret in ("PRIVATE_PROVIDER_DETAILS", "PRIVATE_TOKEN"):
+        assert secret not in response.text + caplog.text
+    assert store.get(row.request_id).state == "pending"

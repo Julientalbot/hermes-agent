@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from pathlib import Path
 
@@ -170,8 +171,12 @@ async def telegram_complete(request_id: str, request: Request):
             return _error(400, "Réponse Telegram invalide.")
         accepted = await run_in_threadpool(complete_login, _store(), request_id, cookie,
                                           data["nonce"], data.get("id_token"), client_id=telegram_login_client_id())
-    except (ValueError, jwt.PyJWTError):
-        return _error(401, "Connexion Telegram refusée ou expirée. Réessayez avec le compte attendu.")
+    except (ValueError, jwt.PyJWTError) as exc:
+        # Never log tokens, claims, cookies or exception text. The class is enough
+        # to distinguish provider transport, signatures and claim validation.
+        code = type(exc).__name__ if isinstance(exc, jwt.PyJWTError) else "InvalidLoginValue"
+        logging.getLogger(__name__).warning("screen_telegram_login_rejected code=%s", code)
+        return _error(401, "Connexion Telegram non validée (" + code + "). L’accès reste protégé.")
     if not accepted:
         return _error(401, "Cette autorisation ne correspond pas à cette demande et à ce navigateur.")
     response = JSONResponse({"state": "authorized"}, headers={"Cache-Control": "no-store"})
