@@ -1,4 +1,4 @@
-"""Opt-in private-chat browser lease. No credentials or CDP URLs are persisted."""
+"""Opt-in conversation browser lease. No credentials or CDP URLs are persisted."""
 from __future__ import annotations
 
 import hashlib
@@ -16,14 +16,32 @@ def settings():
     return (load_config().get('browser') or {}).get('browser_use') or {}
 
 
-def owner():
+def owner(task_id):
+    """Bind continuity to a runtime conversation, not to a secret-collection policy."""
     from gateway.session_context import get_session_env as get
+    platform = get('HERMES_SESSION_PLATFORM')
     chat, user = get('HERMES_SESSION_CHAT_ID'), get('HERMES_SESSION_USER_ID')
-    if (get('HERMES_SESSION_PLATFORM') != 'telegram'
-            or get('HERMES_SESSION_CHAT_TYPE') not in ('dm', 'private')
-            or not chat or chat != user or get('HERMES_CRON_SESSION')):
-        raise RuntimeError('Persistent browser requires an authenticated private Telegram owner')
-    value = [chat, user, get('HERMES_SESSION_THREAD_ID'), get('HERMES_SESSION_KEY')]
+    key, thread = get('HERMES_SESSION_KEY'), get('HERMES_SESSION_THREAD_ID')
+    if get('HERMES_CRON_SESSION'):
+        if not task_id or not task_id.startswith('cron:'):
+            raise RuntimeError('Persistent cron browser requires its execution task ID')
+        value = ['cron', task_id]
+    elif platform == 'telegram':
+        if not chat or not user:
+            raise RuntimeError('Persistent Telegram browser requires an authenticated conversation')
+        if get('HERMES_SESSION_CHAT_TYPE') in ('dm', 'private'):
+            if chat != user:
+                raise RuntimeError('Private Telegram owner does not match its chat')
+            # Preserve existing private leases across this upgrade.
+            value = [chat, user, thread, key]
+        elif get('HERMES_SESSION_CHAT_TYPE') in ('group', 'supergroup'):
+            value = ['telegram-group', chat, thread, key]
+        else:
+            raise RuntimeError('Unsupported Telegram conversation type')
+    else:
+        if not task_id or task_id == 'default':
+            raise RuntimeError('Persistent browser requires a runtime task ID')
+        value = [platform or 'local', chat, thread, key, task_id]
     return hashlib.sha256(json.dumps(value).encode()).hexdigest()
 
 

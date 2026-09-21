@@ -81,3 +81,44 @@ def test_configured_provider_failure_does_not_fall_back(monkeypatch):
     with pytest.raises(requests.Timeout):
         sessions._create_cloud_session_or_fallback('task', p)
     local.assert_not_called()
+
+
+def test_conversation_owners_allow_group_and_cron_without_cross_takeover(monkeypatch):
+    from plugins.browser.browser_use.persistence import owner
+    from gateway import session_context
+    context = {'HERMES_SESSION_PLATFORM': 'telegram', 'HERMES_SESSION_CHAT_ID': '-100',
+               'HERMES_SESSION_USER_ID': '1', 'HERMES_SESSION_CHAT_TYPE': 'supergroup',
+               'HERMES_SESSION_KEY': 'group-thread', 'HERMES_SESSION_THREAD_ID': '4'}
+    monkeypatch.setattr(session_context, 'get_session_env', lambda name: context.get(name, ''))
+    group = owner('task-a')
+    context['HERMES_SESSION_USER_ID'] = '2'
+    assert owner('task-b') == group  # Same authorized conversation, another participant.
+    context['HERMES_SESSION_THREAD_ID'] = '5'
+    assert owner('task-b') != group
+    context.update(HERMES_CRON_SESSION='1', HERMES_SESSION_PLATFORM='', HERMES_SESSION_CHAT_ID='')
+    assert owner('cron:job:run-a') != owner('cron:job:run-b')
+    assert owner('cron:job:run-a') != group
+    with pytest.raises(RuntimeError, match='execution task ID'):
+        owner('default')
+    p = provider()
+    p._persistent_leases['browser-1'] = Mock()
+    assert p.keep_session('browser-1') is False
+    p._persistent_leases['browser-1'].checkpoint.assert_not_called()
+
+
+def test_private_owner_compatibility_and_no_anonymous_owner(monkeypatch):
+    import hashlib
+    from plugins.browser.browser_use.persistence import owner
+    from gateway import session_context
+    context = {'HERMES_SESSION_PLATFORM': 'telegram', 'HERMES_SESSION_CHAT_ID': '1',
+               'HERMES_SESSION_USER_ID': '1', 'HERMES_SESSION_CHAT_TYPE': 'private',
+               'HERMES_SESSION_KEY': 'private-thread', 'HERMES_SESSION_THREAD_ID': ''}
+    monkeypatch.setattr(session_context, 'get_session_env', lambda name: context.get(name, ''))
+    assert owner('task') == hashlib.sha256(json.dumps(['1', '1', '', 'private-thread']).encode()).hexdigest()
+    context['HERMES_SESSION_USER_ID'] = '2'
+    with pytest.raises(RuntimeError, match='does not match'):
+        owner('task')
+    context.clear()
+    with pytest.raises(RuntimeError, match='runtime task ID'):
+        owner('default')
+    assert owner('cli-session-a') != owner('cli-session-b')

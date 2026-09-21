@@ -1,4 +1,4 @@
-# Private Telegram continuity (opt-in pilot)
+# Persistent browser continuity (opt-in)
 
 The direct Browser Use provider accepts `browser.browser_use.profile_id` in the
 owning Hermes profile's config. Provision one Browser Use profile per client;
@@ -7,10 +7,12 @@ Keep `browser.backend: "off"`, select `browser.cloud_provider: browser-use`, and
 set `browser.inactivity_timeout: 600`. The existing native tools and vault remain
 in use. Keep the API key in the profile's secret store, outside the image.
 
-This opt-in path currently requires POSIX file locks and a private Telegram turn
-whose authenticated chat and user IDs agree. Other surfaces must use the default
-(nonpersistent) provider configuration. The local deployment launcher must support
-the returned CDP endpoint.
+This opt-in path requires POSIX file locks. Telegram continuity follows the
+authenticated conversation and topic, including authorized groups. Secret and
+one-time-code collection remains private. Cron browsers are scoped to their
+execution task and closed at turn completion; they may reuse profile cookies,
+but cannot take over a different conversation’s live browser. Other native
+surfaces use their runtime task identity. The launcher must support the CDP endpoint.
 
 Hermes keeps its tracked browser between turns. Its existing inactivity reaper
 closes it; the provider caps its life at thirty minutes. A private record under

@@ -76,6 +76,9 @@ class BrowserUseBrowserProvider(CloudBrowserProvider):
         return bool(settings().get("profile_id"))
 
     def keep_session(self, session_id):
+        from gateway.session_context import get_session_env
+        if get_session_env("HERMES_CRON_SESSION"):
+            return False  # Cron has no next conversational turn; normal cleanup closes it.
         lease = self._persistent_leases.get(session_id)
         if lease is None:
             return False
@@ -156,7 +159,7 @@ class BrowserUseBrowserProvider(CloudBrowserProvider):
         if profile_id:
             if managed_mode:
                 raise RuntimeError("Persistent Browser Use profiles require the direct provider")
-            lease = Lease(str(profile_id), owner())
+            lease = Lease(str(profile_id), owner(task_id))
             try:
                 data = lease.acquire(self, config)
             except Exception:
