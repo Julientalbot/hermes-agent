@@ -1497,10 +1497,13 @@ class _CodexCompletionsAdapter:
         # The Codex endpoint rejects max_output_tokens/temperature (400) — omit.
         extra_body = kwargs.get("extra_body") or {}
         if isinstance(extra_body, dict):
-            # service_tier (fast mode) is a top-level Responses field; xAI's endpoint rejects it.
+            # Priority is a top-level Responses field, supported by Grok 4.6/4.7.
             service_tier = extra_body.get("service_tier")
-            if isinstance(service_tier, str) and service_tier.strip() and not is_xai:
-                resp_kwargs["service_tier"] = service_tier.strip()
+            if isinstance(service_tier, str) and service_tier.strip():
+                from agent.model_metadata import grok_supports_priority_service_tier
+                if not is_xai or (service_tier.strip() == "priority"
+                                  and grok_supports_priority_service_tier(wire_model)):
+                    resp_kwargs["service_tier"] = service_tier.strip()
             reasoning_cfg = extra_body.get("reasoning")
             if isinstance(reasoning_cfg, dict):
                 # Shared per-model vocabulary with the main transport ("max" is gpt-5.6-only; "minimal"/"ultra"

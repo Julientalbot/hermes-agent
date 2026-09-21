@@ -3482,16 +3482,18 @@ class TestCodexAdapterPromptCacheKey:
         )
         assert captured["service_tier"] == "priority"
 
-    def test_xai_backend_drops_auxiliary_service_tier(self):
+    @pytest.mark.parametrize("model", ["grok-4.6", "grok-4.7"])
+    def test_xai_backend_forwards_auxiliary_service_tier(self, model):
         adapter, captured = self._build_adapter(
             base_url="https://api.x.ai/v1",
-            model="grok-4.6",
+            model=model,
         )
         adapter.create(
             messages=[{"role": "user", "content": "hi"}],
-            extra_body={"service_tier": "priority"},
+            extra_body={"service_tier": "priority", "reasoning": {"effort": "low"}},
         )
-        assert "service_tier" not in captured
+        assert captured["service_tier"] == "priority"
+        assert captured["reasoning"]["effort"] == "low"
 
     @pytest.mark.parametrize("base_url", [
         "https://api.openai.com/v1",
