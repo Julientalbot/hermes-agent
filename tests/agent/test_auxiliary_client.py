@@ -3444,6 +3444,7 @@ class TestCodexAdapterPromptCacheKey:
 
         real_client = MagicMock()
         real_client.base_url = base_url
+        real_client._hermes_aux_effective_provider = None
         real_client.responses.create = _create
         adapter = _CodexCompletionsAdapter(real_client, model)
         return adapter, captured_kwargs
@@ -3632,6 +3633,7 @@ class TestCodexAdapterGithubResponsesMessageIdDrop:
 
         real_client = MagicMock()
         real_client.base_url = base_url
+        real_client._hermes_aux_effective_provider = None
         real_client.responses.create = _create
         adapter = _CodexCompletionsAdapter(real_client, "gpt-5.5")
         return adapter, captured_kwargs
