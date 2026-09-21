@@ -96,6 +96,18 @@ class BrowserUseBrowserProvider(CloudBrowserProvider):
         return self._get_config_or_none(refresh_token=False) is not None
 
     def _get_config_or_none(self, *, refresh_token: bool = True) -> Optional[Dict[str, Any]]:
+        # An explicitly configured operator endpoint uses only its scoped credential.
+        from plugins.browser.browser_use.persistence import settings
+        from urllib.parse import urlsplit
+        gateway = settings().get("gateway_url")
+        if gateway:
+            endpoint = urlsplit(str(gateway))
+            if (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username
+                    or endpoint.password or endpoint.query or endpoint.fragment):
+                raise ValueError("Browser gateway requires an HTTPS URL without credentials or query")
+            token = get_secret("BROWSER_USE_GATEWAY_TOKEN")
+            return {"api_key": token, "base_url": str(gateway).rstrip("/"),
+                    "managed_mode": False, "tenant_gateway": True} if token else None
         # Lazy: managed_tool_gateway pulls in the Nous auth stack direct-key users never need.
         from tools.managed_tool_gateway import peek_nous_access_token, resolve_managed_tool_gateway
         from tools.tool_backend_helpers import NOUS_MANAGED_PROVIDER, read_selection

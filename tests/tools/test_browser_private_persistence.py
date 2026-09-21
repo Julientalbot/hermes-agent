@@ -122,3 +122,36 @@ def test_private_owner_compatibility_and_no_anonymous_owner(monkeypatch):
     with pytest.raises(RuntimeError, match='runtime task ID'):
         owner('default')
     assert owner('cli-session-a') != owner('cli-session-b')
+
+
+def test_operator_gateway_uses_only_scoped_token(monkeypatch):
+    from plugins.browser.browser_use import persistence
+    from plugins.browser.browser_use import provider as module
+    monkeypatch.setattr(persistence, 'settings', lambda: {'gateway_url':'https://agents.example/browser-runtime/'})
+    read = Mock(return_value='scoped-token')
+    monkeypatch.setattr(module, 'get_secret', read)
+    config = provider()._get_config_or_none()
+    assert config == {'api_key':'scoped-token','base_url':'https://agents.example/browser-runtime','managed_mode':False,'tenant_gateway':True}
+    read.assert_called_once_with('BROWSER_USE_GATEWAY_TOKEN')
+    read.return_value = None
+    assert provider()._get_config_or_none() is None
+    monkeypatch.setattr(persistence, 'settings', lambda: {'gateway_url':'http://unsafe.example'})
+    with pytest.raises(ValueError, match='HTTPS'):
+        provider()._get_config_or_none()
+
+
+def test_gateway_reconciliation_preserves_operation_identity(monkeypatch, tmp_path):
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    p = provider(); p._post_create.side_effect = requests.Timeout()
+    cfg = {'api_key':'scoped', 'base_url':'https://gateway.invalid', 'tenant_gateway':True}
+    lease = Lease('client-a','owner-a')
+    try:
+        with pytest.raises(requests.Timeout):lease.acquire(p,cfg)
+        operation = lease.record['operation_id']
+    finally:lease.release()
+    p._post_create.side_effect = None
+    resumed = Lease('client-a','owner-a')
+    try:
+        assert resumed.acquire(p,cfg)['id'] == 'browser-1'
+        assert p._post_create.call_args.args[2]['metadata']['hermes_operation'] == operation
+    finally:resumed.release()

@@ -87,9 +87,10 @@ class Lease:
         headers = provider._headers(config)
         base = config['base_url']
         old = self.record
-        if old.get('status') == 'creating':
+        reconciling = old.get('status') == 'creating'
+        if reconciling and not config.get('tenant_gateway'):
             raise RuntimeError('Browser creation outcome unknown; reconcile the recorded operation before retrying')
-        if old:
+        if old and not reconciling:
             response = requests.get(base + '/browsers/' + old['browser_id'], headers=headers, timeout=15)
             if response.status_code == 404:
                 current = {'status': 'stopped'}
@@ -110,9 +111,12 @@ class Lease:
                     raise RuntimeError('Previous browser is not confirmed stopped')
             elif current.get('status') != 'stopped':
                 raise RuntimeError('Browser status unknown; no replacement was created')
-        self.record = {'status': 'creating', 'profile_id': self.profile_id, 'owner': self.owner_id,
-                       'operation_id': uuid.uuid4().hex, 'last_used_at': time.time()}
-        self.write()
+        if reconciling and old.get('owner') != self.owner_id:
+            raise RuntimeError('Browser creation belongs to another pending conversation')
+        if not reconciling:
+            self.record = {'status': 'creating', 'profile_id': self.profile_id, 'owner': self.owner_id,
+                           'operation_id': uuid.uuid4().hex, 'last_used_at': time.time()}
+            self.write()
         response = provider._post_create(base + '/browsers', headers,
             {'profileId': self.profile_id, 'timeout': 30, 'solveCaptchas': True,
              'enableRecording': False, 'metadata': {'hermes_operation': self.record['operation_id']}})

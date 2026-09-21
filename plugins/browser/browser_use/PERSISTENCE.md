@@ -26,3 +26,12 @@ A timed-out create leaves a `creating` record. Inspect the provider operation
 metadata and resolve it before retrying; never delete that record simply to bypass
 the exclusion. Configured persistent sessions never silently fall back to local
 Chromium. CAPTCHA handling is a provider capability, not a success guarantee.
+
+An operator may configure `browser.browser_use.gateway_url` (HTTPS only) and
+`BROWSER_USE_GATEWAY_TOKEN` for a tenant-scoped compatible lifecycle endpoint.
+This explicit endpoint never reads the provider-wide `BROWSER_USE_API_KEY` and
+does not require or borrow Nous Portal entitlement. The configured `profile_id`
+can be a tenant alias which the operator resolves to the actual cloud profile.
+The endpoint must enforce ownership for create, GET and stop; a client-side alias
+is not an access-control boundary. The deployment must keep provider keys outside
+customer runtimes and protect the gateway using TLS and distinct credentials.
