@@ -134,3 +134,15 @@ Unlike masked input, supplied credentials pass through conversation/model/tool
 inputs. Vault encryption does not erase those copies. Do not repeat passwords
 in responses or memory notes. The model-blind protection described above applies
 to the masked input and saved-handle paths, not to supplied credentials.
+
+### Verification codes supplied in private chat
+
+`browser_vault_enter_code(handle, code=...)` can fill a code supplied by the user
+when an interactive prompt is unavailable. First call it with the saved login
+handle and no code to observe the requested factor. The supplied code is accepted
+only for that origin and browser, within ten minutes, and the request is consumed
+before filling. Reobserve and request a fresh code if the browser changed; do not
+replay a fill whose outcome is unknown. Telegram groups and unattended turns do
+not accept this supplied-code path. Interactive prompts and stored TOTP seeds
+retain their existing behavior. Chat-supplied codes pass through model/tool inputs;
+they are never returned by the tool or saved as vault credentials.
