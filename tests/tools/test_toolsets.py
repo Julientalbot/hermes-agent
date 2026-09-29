@@ -24,6 +24,14 @@ def _make_schema(name: str, description: str = "test tool"):
 
 class TestGetToolset:
 
+    def test_xai_code_interpreter_toolset(self):
+        ts = get_toolset("xai_code_interpreter")
+        assert ts is not None
+        assert ts["tools"] == ["xai_code_interpreter"]
+        description = ts["description"].lower()
+        assert "code_interpreter" in description or "sandbox" in description
+        assert "execute_code" in description
+
     def test_merges_registry_tools_into_builtin_toolset(self, monkeypatch):
         reg = ToolRegistry()
         reg.register(

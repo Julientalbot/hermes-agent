@@ -86,6 +86,13 @@ TOOLSETS = {
         "X (Twitter) Search.",
         ["x_search"],
     ),
+    "xai_code_interpreter": _ts(
+        "Run Python in xAI's hosted code_interpreter sandbox via the Responses API. "
+        "Stateless server-side execution (NumPy/Pandas/SciPy-class libs) — not a "
+        "replacement for local execute_code. Requires xAI credentials. Off by default; "
+        "enable in `hermes tools` → xAI Code Interpreter.",
+        ["xai_code_interpreter"],
+    ),
     "vision": _ts("Image analysis and vision tools", ["vision_analyze"]),
     "video": _ts("Video analysis and understanding tools (opt-in, not in default toolset)", ["video_analyze"]),
     "image_gen": _ts("Creative generation tools (images)", ["image_generate"]),

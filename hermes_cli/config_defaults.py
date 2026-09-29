@@ -2440,6 +2440,13 @@ DEFAULT_CONFIG = {
         # Retries on 5xx / ReadTimeout / ConnectionError (backoff 1.5x attempt s, cap 5s).
         "retries": 2,
     },
+    # xAI Code Interpreter — server-side Python sandbox via Responses API code_interpreter.
+    # Separate from local execute_code. Enable in `hermes tools` → xAI Code Interpreter.
+    "xai_code_interpreter": {
+        "model": "grok-4.5",
+        "timeout_seconds": 180,
+        "retries": 2,
+    },
     # External secret sources — pull credentials from secret managers at startup instead of storing
     # them in ~/.hermes/.env.
     # Browser credential vault: which login sources browser_vault_list/fill may draw from. The local
