@@ -32,7 +32,16 @@ jobs:
           git fetch --no-tags origin fleet/hotfix-browser-fr-20260721
           # Les commits du hotfix = tout ce qui suit cette base (upstream au moment du dernier rebase du patch FR).
           HOTFIX_COMMITS=$(git rev-list --reverse 6e7b83a2f1c093e992a8d838ed77ea320fbd8e51..origin/fleet/hotfix-browser-fr-20260721)
-          git checkout -B fleet/auto upstream/main
+          git checkout -B build upstream/main
           git cherry-pick $HOTFIX_COMMITS
           echo "candidat: $(git rev-parse HEAD) = upstream $(git rev-parse --short upstream/main) + hotfix"
-          git push --force origin fleet/auto
+          # Le jeton Actions ne peut pas force-pousser une histoire upstream entière : GitHub
+          # expire en vérifiant si des workflows changent. On publie un seul commit sur
+          # fleet/auto, même code, workflows déjà présents laissés tels quels.
+          git fetch --no-tags origin fleet/auto
+          git rm -rq --ignore-unmatch .github/workflows
+          git checkout origin/fleet/auto -- .github/workflows
+          TREE=$(git write-tree)
+          PARENT=$(git rev-parse origin/fleet/auto)
+          NEW=$(git commit-tree "$TREE" -p "$PARENT" -m "fleet-auto: upstream $(git rev-parse --short upstream/main) + hotfix")
+          git push origin "$NEW:fleet/auto"
