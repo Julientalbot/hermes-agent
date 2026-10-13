@@ -146,7 +146,7 @@ def api_get(path: str, token: str, params: dict | None = None,
 def parse_ts(ts: str | None) -> datetime | None:
     if not ts:
         return None
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return datetime.fromisoformat(ts)
 
 
 def dur_s(started: str | None, completed: str | None) -> float | None:
@@ -234,7 +234,8 @@ def collect_timings(token: str, repo: str, run_id: str, head_sha: str) -> dict:
     """Collect job/step timings from the GitHub API.
 
     1. Get orchestrator run's direct jobs (detect, all-checks-pass, etc.).
-       Skip workflow-call placeholder jobs (step name starts with "Run ./.github/").
+       Skip workflow-call placeholder jobs (step name starts with
+       "Run ./.github/workflows/").
     2. Find sub-workflow runs via head_sha + event=workflow_call.
     3. Get each sub-workflow run's jobs with full step timing.
     """
@@ -251,7 +252,7 @@ def collect_timings(token: str, repo: str, run_id: str, head_sha: str) -> dict:
     direct = []
     for job in orch_jobs:
         steps = job.get("steps") or []
-        if any(s.get("name", "").startswith("Run ./.github/") for s in steps):
+        if any(s.get("name", "").startswith("Run ./.github/workflows/") for s in steps):
             continue  # workflow-call placeholder
         if job.get("status") in ("in_progress", "queued"):
             continue  # skip self / unfinished
@@ -570,7 +571,7 @@ def _gantt_bars(timings: dict, baseline: dict | None) -> str:
 
         delta_info = ""
         if bl and not is_skipped(bl) and bl.get("duration_s") is not None:
-            d_text, d_cls = fmt_delta(dur, bl.get("duration_s"))
+            d_text, _d_cls = fmt_delta(dur, bl.get("duration_s"))
             delta_info = f' — {d_text}'
 
         # Wait bar: shows idle time before the job started running
@@ -787,7 +788,6 @@ def _regressions(timings: dict, baseline: dict | None) -> str:
 
     rows = []
     for _, diff, job, step, cur, bl_d in top:
-        cls = "slower" if diff > 0 else "faster"
         tag = f'<span class="tag {"slow" if diff > 0 else "fast"}">{"+" if diff > 0 else ""}{diff:.1f}s</span>'
         rows.append(
             f'<tr>'
@@ -859,7 +859,6 @@ def generate_html(timings: dict, baseline: dict | None = None) -> str:
 
 def generate_summary(timings: dict, baseline: dict | None = None) -> str:
     stats = compute_stats(timings, baseline)
-    bl_map = {j["name"]: j for j in (baseline or {}).get("jobs", [])}
 
     lines = ["## CI Timing Summary\n"]
 
@@ -909,7 +908,7 @@ def generate_review_status(
     """Produce a review_status JSON array for the CI timings review section.
 
     Returns a list with one ``{source, results: [...]}`` entry. The
-    result kind is ``"info"`` or ``"warning"`` (timings is never error —
+    result kind is ``"debug"`` or ``"warning"`` (timings is never error —
     it's an observability job). *summary* is a single short line suitable
     for the PR comment. *detail* has the per-job deltas as a markdown
     fragment.
@@ -917,7 +916,7 @@ def generate_review_status(
     stats = compute_stats(timings, baseline)
 
     if baseline is None:
-        severity = "info"
+        severity = "debug"
         summary = f"Wall time {fmt_dur(stats['wall'])} (no baseline yet)."
     else:
         wall = stats["wall"]
@@ -928,10 +927,10 @@ def generate_review_status(
             if pct > _TIMINGS_WARN_PCT * 100:
                 severity = "warning"
             else:
-                severity = "info"
+                severity = "debug"
         else:
             wall_str = f"Wall time {fmt_dur(wall)}."
-            severity = "info"
+            severity = "debug"
 
         if stats["slower"]:
             wall_str += f" {stats['slower']} job(s) slower,"
@@ -998,11 +997,13 @@ def main():
                         help="Markdown summary output path (default: ci-timings-summary.md)")
     parser.add_argument("--review-status-out", default="",
                         help="If set, write a review-status JSON for the unified PR comment.")
+    parser.add_argument("--review-status-only", action="store_true",
+                        help="Write review status from existing timings without regenerating the report.")
     args = parser.parse_args()
 
     # Collect or load timings
     if args.from_json:
-        with open(args.from_json, encoding="utf-8") as f:
+        with open(args.from_json, encoding="utf-8-sig") as f:
             timings = json.load(f)
     else:
         repo = expect_env("GITHUB_REPOSITORY")
@@ -1038,11 +1039,21 @@ def main():
     # Load baseline
     baseline = None
     if os.path.exists(args.baseline):
-        with open(args.baseline, encoding="utf-8") as f:
+        with open(args.baseline, encoding="utf-8-sig") as f:
             baseline = json.load(f)
         print(f"Loaded baseline from {args.baseline}")
     else:
         print(f"No baseline file at {args.baseline} — generating current-only report")
+
+    if args.review_status_only:
+        if not args.review_status_out:
+            parser.error("--review-status-only requires --review-status-out")
+        report_url = os.environ.get("CI_TIMINGS_REPORT_URL", "")
+        statuses = generate_review_status(timings, baseline, report_url)
+        with open(args.review_status_out, "w", encoding="utf-8") as f:
+            f.write(f"review_status={json.dumps(statuses)}\n")
+        print(f"Wrote review status to {args.review_status_out}")
+        return
 
     # Generate HTML
     html = generate_html(timings, baseline)

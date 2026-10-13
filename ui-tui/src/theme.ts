@@ -1,6 +1,7 @@
+import { contrastRatio, ensureContrast, mix, parseColor, relativeLuminance, toHex } from '@hermes/shared/color'
 import type { SkinBranding, SkinColors } from '@hermes/shared/skin'
 
-import { desaturate, grayOf, liftForContrast, mix, parseColor, relativeLuminance, toHex } from './lib/color.js'
+import { desaturate, grayOf, liftForContrast } from './lib/color.js'
 
 export interface ThemeColors {
   primary: string
@@ -68,12 +69,13 @@ export interface Theme {
 
 // ── Color math ───────────────────────────────────────────────────────
 //
-// All generic color computation lives in lib/color.ts (the color primitive);
+// Generic color computation lives in @hermes/shared/color (the primitives,
+// shared with the desktop) and lib/color.ts (TUI-only lifts and re-toning);
 // this file keeps only the ANSI-256 remapping that is specific to the
 // limited-palette Apple Terminal path. contrastRatio/ensureContrast are
 // re-exported for existing consumers (tests, /theme-info).
 
-export { contrastRatio, ensureContrast } from './lib/color.js'
+export { contrastRatio, ensureContrast }
 
 const XTERM_6_LEVELS = [0, 95, 135, 175, 215, 255] as const
 const ANSI_LIGHT_MAX_LUMINANCE = 0.72
@@ -222,14 +224,39 @@ function normalizeAnsiForeground(color: string): string {
   return `ansi256(${ansi})`
 }
 
+const ANSI256_RE = /^ansi256\((\d{1,3})\)$/
+
+/**
+ * The literal `#rrggbb` a theme tone paints as, or '' when it has none.
+ *
+ * The inverse of `normalizeAnsiForeground`: tones are not uniformly hex, since
+ * a limited-palette terminal rewrites the foregrounds to `ansi256(N)`.
+ * Consumers needing a real color — OSC 10/11, which only speak `#rrggbb` —
+ * resolve through here rather than hex-testing the tone, which would silently
+ * skip exactly the terminals that did the quantizing.
+ */
+export function themeToneHex(tone: string): string {
+  const ansi = ANSI256_RE.exec(tone.trim())
+
+  if (ansi) {
+    const n = Number(ansi[1])
+
+    return n <= 255 ? toHex(xtermEightBitRgb(n)) : ''
+  }
+
+  const rgb = parseColor(tone)
+
+  return rgb ? toHex(rgb) : ''
+}
+
 // ── Defaults ─────────────────────────────────────────────────────────
 
 const BRAND: ThemeBrand = {
   name: 'Hermes Agent',
-  icon: '⚕',
+  icon: '☤',
   prompt: '❯',
   welcome: 'Type your message or /help for commands.',
-  goodbye: 'Goodbye! ⚕',
+  goodbye: 'Goodbye! ☤',
   tool: '┊',
   helpHeader: '(^_^)? Commands'
 }
@@ -788,6 +815,28 @@ export function defaultThemeForCurrentBackground(env: NodeJS.ProcessEnv = proces
 
 // ── Skin → Theme ─────────────────────────────────────────────────────
 
+/** The skin's authored canvas as a #-prefixed hex, or null when absent/junk. */
+const authoredBackground = (raw: string | undefined): null | string => {
+  const v = (raw ?? '').trim()
+
+  return backgroundLuminance(v) === null ? null : v.startsWith('#') ? v : `#${v}`
+}
+
+/**
+ * A skin that authors a background OWNS its polarity: the TUI paints the
+ * terminal with it (applySkin → OSC-11), so contrast adaptation, the derived
+ * tone ladder, and ANSI light-terminal normalization must all run against the
+ * skin's canvas — not the host profile the skin just covered. (A pure-black
+ * skin on a light Apple Terminal otherwise gets its text remapped for a light
+ * background it painted over: invisible.) Host detection still governs skins
+ * without a background — they render on the terminal's own surface.
+ */
+export function skinIsLight(colors: SkinColors, env: NodeJS.ProcessEnv = process.env): boolean {
+  const authored = backgroundLuminance(colors['background'] ?? '')
+
+  return authored === null ? detectLightMode(env) : authored >= LUMA_LIGHT_THRESHOLD
+}
+
 export function fromSkin(
   colors: SkinColors,
   branding: SkinBranding,
@@ -796,11 +845,13 @@ export function fromSkin(
   toolPrefix = '',
   helpHeader = ''
 ): Theme {
-  // Live detection (not the module-load snapshot): by the time the gateway
-  // skin arrives, the OSC-11 background probe has usually answered and cached
-  // itself into HERMES_TUI_BACKGROUND. See #applySkin / syncThemeToTerminalBackground.
-  const isLight = detectLightMode()
-  const bg = referenceBackground(isLight)
+  // Polarity: the skin's own canvas when it authors one (see skinIsLight);
+  // otherwise live host detection (not the module-load snapshot — by the time
+  // the gateway skin arrives, the OSC-11 probe has usually answered and cached
+  // itself into HERMES_TUI_BACKGROUND. See #applySkin / syncThemeToTerminalBackground).
+  const skinBg = authoredBackground(colors['background'])
+  const isLight = skinIsLight(colors)
+  const bg = skinBg ?? referenceBackground(isLight)
   const base = isLight ? LIGHT_SEEDS : DARK_SEEDS
   const d = isLight ? LIGHT_THEME : DARK_THEME
   const c = (k: string) => colors[k]
