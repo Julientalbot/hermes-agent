@@ -1,6 +1,6 @@
 name: hermes-xai
 repo: https://github.com/Julientalbot/hermes-xai
-sha: bc824dc1334f09d532f8d301d60434fc8536643f
+sha: 8fd9bf8ecef1f8e9cb2cb7921fc86527acd9ede3
 version: "0.1.0"
 description: >-
   The xAI API surfaces core does not cover, nothing it already ships (provider, x_search, web search,
@@ -19,7 +19,7 @@ description: >-
 maintainer: Julientalbot
 tier: community
 category: voice
-docs_url: https://github.com/Julientalbot/hermes-xai/blob/bc824dc1334f09d532f8d301d60434fc8536643f/README.md
+docs_url: https://github.com/Julientalbot/hermes-xai/blob/8fd9bf8ecef1f8e9cb2cb7921fc86527acd9ede3/README.md
 requires_hermes: ">=0.21.5"
 platforms: []
 capabilities:
