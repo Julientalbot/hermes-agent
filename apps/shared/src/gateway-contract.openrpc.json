@@ -32099,6 +32099,18 @@
             ],
             "default": null,
             "title": "Rebind Survivor Row Ids"
+          },
+          "submission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Submission Id"
           }
         },
         "required": [
@@ -32225,6 +32237,18 @@
             ],
             "default": null,
             "title": "Forwarded"
+          },
+          "duplicate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duplicate"
           }
         },
         "title": "PromptSubmitResult",
