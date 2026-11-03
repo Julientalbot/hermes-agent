@@ -1755,7 +1755,9 @@ stt:
   #   openai / groq          -> `prompt`, forwarded unchanged
   #   mistral                -> `prompt`, forwarded unchanged
   #   deepinfra              -> OpenAI-compatible `prompt`, unchanged
-  #   local_command/xai/
+  #   xai                    -> split on commas into `keyterm` fields
+  #                             (max 100 terms, each <= 50 chars)
+  #   local_command/
   #   elevenlabs             -> unsupported; DEBUG log, then continue
   #   plugin providers       -> `prompt` in `**extra`; plugin owns limits
   # prompt: "Hermes, Teknium, Nous Research, kanban"

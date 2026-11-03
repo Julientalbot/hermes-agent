@@ -396,10 +396,11 @@ class TestSttPromptConfig:
 # ---------------------------------------------------------------------------
 
 
-class TestUnsupportedBackends:
-    def test_xai_logs_debug_and_proceeds_without_prompt(
-        self, monkeypatch, tmp_path, caplog,
-    ):
+class TestXaiKeyterms:
+    """xAI /v1/stt takes no ``prompt``; the vocabulary rides as repeated ``keyterm`` fields."""
+
+    @staticmethod
+    def _post_data(monkeypatch, tmp_path, prompt):
         audio = _make_audio(tmp_path)
         monkeypatch.setattr(
             "tools.xai_http.resolve_xai_http_credentials",
@@ -408,22 +409,46 @@ class TestUnsupportedBackends:
         monkeypatch.setattr(
             "tools.xai_http.hermes_xai_user_agent", lambda: "test-ua",
         )
-
         response = MagicMock(status_code=200)
         response.json.return_value = {"text": "hello", "language": "en", "duration": 1.0}
         fake_requests = SimpleNamespace(post=MagicMock(return_value=response))
         monkeypatch.setitem(sys.modules, "requests", fake_requests)
-
-        with caplog.at_level(logging.DEBUG, logger="tools.transcription_tools"), \
-             patch("tools.transcription_tools._load_stt_config", return_value={}):
-            result = transcription_tools._transcribe_xai(
-                audio, "grok-stt", prompt=PROMPT,
-            )
-
+        with patch("tools.transcription_tools._load_stt_config", return_value={}):
+            result = transcription_tools._transcribe_xai(audio, "grok-stt", prompt=prompt)
         assert result["success"] is True
-        _, kwargs = fake_requests.post.call_args
-        assert "prompt" not in kwargs["data"]
+        return fake_requests.post.call_args.kwargs["data"]
 
+    def test_prompt_becomes_keyterm_fields(self, monkeypatch, tmp_path):
+        data = self._post_data(monkeypatch, tmp_path, PROMPT)
+        assert data["keyterm"] == ["Hermes", "Teknium", "Nous Research", "kanban"]
+        assert "prompt" not in data
+
+    def test_keyterms_respect_xai_limits(self, monkeypatch, tmp_path):
+        long_sentence = "Transcribe the following meeting between the two founders carefully"
+        terms = [f"Term{i}" for i in range(150)]
+        prompt = f"{long_sentence}. Labenne, labenne; " + ", ".join(terms) + "."
+        data = self._post_data(monkeypatch, tmp_path, prompt)
+        assert len(data["keyterm"]) == 100
+        assert data["keyterm"][:2] == ["Labenne", "Term0"]  # sentence dropped, case-insensitive dedupe
+        assert all(len(term) <= 50 for term in data["keyterm"])
+
+    @pytest.mark.parametrize("prompt", [None, "", " , . ;"])
+    def test_no_vocabulary_sends_no_keyterm(self, monkeypatch, tmp_path, prompt):
+        data = self._post_data(monkeypatch, tmp_path, prompt)
+        assert "keyterm" not in data
+
+    def test_keyterms_are_repeated_multipart_fields_on_the_wire(self):
+        requests = pytest.importorskip("requests")
+        body = requests.Request(
+            "POST", "https://api.x.ai/v1/stt",
+            data={"model": "grok-voice-transcribe-2.0", "keyterm": ["Labenne", "Tergemina"]},
+            files={"file": ("a.ogg", b"OggS")},
+        ).prepare().body
+        assert body.count(b'name="keyterm"') == 2
+        assert body.index(b"Tergemina") < body.index(b'name="file"')  # options precede the file
+
+
+class TestUnsupportedBackends:
     def test_elevenlabs_logs_debug_and_proceeds_without_prompt(
         self, monkeypatch, tmp_path, caplog,
     ):

@@ -2616,7 +2616,7 @@ stt:
 | `groq` | `prompt` | Forwarded unchanged in the transcription request |
 | `mistral` | `prompt` | Forwarded unchanged in the transcription request |
 | `deepinfra` | `prompt` | OpenAI-compatible path, forwarded unchanged |
-| `xai` | not supported | Logged at DEBUG, the request proceeds without the prompt |
+| `xai` | `keyterm` (repeated) | Split on commas, semicolons, newlines and sentence ends; each term ≤ 50 characters (longer pieces dropped), deduplicated, at most 100 terms |
 | `elevenlabs` | not supported | Logged at DEBUG, the request proceeds without the prompt |
 | `local_command` | not supported | Logged at DEBUG, the request proceeds without the prompt |
 | `stt.providers.<name>` with `type: command` | not supported | Logged at DEBUG, the request proceeds without the prompt |

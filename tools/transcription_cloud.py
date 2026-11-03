@@ -217,7 +217,7 @@ def _transcribe_mistral(
 
 
 # ---- REST multipart backends (xAI, ElevenLabs) ----------------------------
-def _post_audio_multipart(url: str, headers: dict[str, str], file_path: str, data: dict[str, str]):
+def _post_audio_multipart(url: str, headers: dict[str, str], file_path: str, data: dict[str, Any]):
     import requests
     with open(file_path, "rb") as audio_file:
         return requests.post(url, headers=headers, files={"file": (Path(file_path).name, audio_file)},
@@ -249,15 +249,30 @@ def _rest_provider(
         return _cloud_failure(e, file_path, f"{label} transcription")
 
 
+_XAI_MAX_KEYTERMS, _XAI_MAX_KEYTERM_CHARS = 100, 50  # documented /v1/stt ``keyterm`` limits
+_KEYTERM_SPLIT_RE = re.compile(r"[,;\n]|\.\s+")
+
+
+def _xai_keyterms(prompt: Optional[str]) -> list[str]:
+    """Split a vocabulary prompt ("Hermes, Teknium, Nous Research") into xAI ``keyterm`` values:
+    deduplicated, at most 100, and terms over 50 characters (sentences, not key terms) dropped."""
+    terms: dict[str, str] = {}
+    for raw in _KEYTERM_SPLIT_RE.split(prompt or ""):
+        term = raw.strip().rstrip(".").strip()
+        if term and len(term) <= _XAI_MAX_KEYTERM_CHARS:
+            terms.setdefault(term.casefold(), term)
+    return list(terms.values())[:_XAI_MAX_KEYTERMS]
+
+
 def _transcribe_xai(
     file_path: str, model_name: str, *, language: Optional[str] = None, prompt: Optional[str] = None
 ) -> dict[str, Any]:
-    """Transcribe via xAI ``POST /v1/stt`` (multipart). Supports ITN, diarization, word timestamps."""
+    """Transcribe via xAI ``POST /v1/stt`` (multipart). Supports ITN, diarization, word timestamps.
+    The vocabulary prompt (``stt.prompt`` / ``pre_transcription``) is sent as repeated ``keyterm`` fields."""
     from hermes_cli.config import get_env_value
     from tools.transcription_tools import _load_stt_config, _resolve_stt_language
     from tools.xai_http import resolve_xai_http_credentials
-    if prompt:
-        _log_prompt_unsupported("STT provider 'xai'")
+    keyterms = _xai_keyterms(prompt)
     # STT is API-billed: prefer the explicit XAI_API_KEY over the xAI OAuth/Grok-subscription
     # credential, which may be valid for Grok yet hit spending-limit errors on /v1/stt.
     direct_api_key = str(get_env_value("XAI_API_KEY") or "").strip()
@@ -285,9 +300,11 @@ def _transcribe_xai(
         # Always name the model: xAI moved the server default from 1.0 to 2.0 mid-September and
         # will retire 1.0, so an omitted field silently changes what Hermes runs.
         resolved_model = normalize_xai_stt_model(model_name)
-        data: dict[str, str] = {"model": resolved_model}
+        data: dict[str, Any] = {"model": resolved_model}
         if language:
             data["language"] = language
+        if keyterms:  # a list value is encoded as one multipart field per term
+            data["keyterm"] = keyterms
         # ``format`` (inverse text normalization) requires ``language``; /v1/stt answers HTTP 400
         # "Field 'language' is required when 'format' is true" otherwise, so with stt.language ""
         # (auto-detect) the flag is dropped instead of failing every transcription.
